@@ -93,7 +93,7 @@ public class Hive13ExploreService extends BaseHiveExploreService {
   @Override
   protected QueryStatus doFetchStatus(OperationHandle operationHandle)
     throws HiveSQLException, ExploreException, HandleNotFoundException {
-    OperationStatus operationStatus = getCliService().getOperationStatus(operationHandle);
+    OperationStatus operationStatus = getCliService().getOperationStatus(operationHandle, false);
     @SuppressWarnings("ThrowableResultOfMethodCallIgnored")
     HiveSQLException hiveExn = operationStatus.getOperationException();
     if (hiveExn != null) {

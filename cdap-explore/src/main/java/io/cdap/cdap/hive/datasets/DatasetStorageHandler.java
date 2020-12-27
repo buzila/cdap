@@ -23,7 +23,7 @@ import io.cdap.cdap.common.conf.Constants;
 import io.cdap.cdap.hive.context.CConfCodec;
 import org.apache.hadoop.hive.ql.metadata.DefaultStorageHandler;
 import org.apache.hadoop.hive.ql.plan.TableDesc;
-import org.apache.hadoop.hive.serde2.SerDe;
+import org.apache.hadoop.hive.serde2.AbstractSerDe;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.OutputFormat;
 import org.apache.hadoop.mapred.SequenceFileOutputFormat;
@@ -61,7 +61,7 @@ public class DatasetStorageHandler extends DefaultStorageHandler {
   }
 
   @Override
-  public Class<? extends SerDe> getSerDeClass() {
+  public Class<? extends AbstractSerDe> getSerDeClass() {
     return DatasetSerDe.class;
   }
 

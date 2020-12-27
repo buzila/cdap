@@ -18,9 +18,10 @@ package io.cdap.cdap.explore;
 
 import io.cdap.cdap.explore.service.ExploreException;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hive.ql.exec.Utilities;
+//import org.apache.hadoop.hive.ql.exec.Utilities;
+import org.apache.hadoop.hive.ql.exec.SerializationUtilities;
 import org.apache.hadoop.hive.ql.plan.ExprNodeGenericFuncDesc;
-import org.apache.hive.service.cli.thrift.TColumnValue;
+import org.apache.hive.service.rpc.thrift.TColumnValue;
 
 import java.lang.reflect.InvocationTargetException;
 
@@ -51,11 +52,11 @@ public class HiveUtilities {
     } catch (ClassNotFoundException | NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
       try {
         // Else try Utilities.deserializeExpression(String)
-        expr = Utilities.deserializeExpression(serializedExpr);
+        expr = SerializationUtilities.deserializeExpression(serializedExpr);
       } catch (NoSuchMethodError e2) {
         try {
           // Else try SerializationUtilities.deserializeExpression(serializedExpr)
-          expr = (ExprNodeGenericFuncDesc) Utilities.class.getMethod(
+          expr = (ExprNodeGenericFuncDesc) SerializationUtilities.class.getMethod(
             "deserializeExpression", String.class, Configuration.class).invoke(null, serializedExpr, conf);
         } catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException e1) {
           throw new IllegalStateException("Not able to deserialize expression. The Hive version is not supported.", e1);

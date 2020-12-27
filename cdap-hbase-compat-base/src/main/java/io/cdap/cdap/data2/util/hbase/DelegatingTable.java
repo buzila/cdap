@@ -258,4 +258,24 @@ public class DelegatingTable implements Table {
                                 byte[] value, RowMutations mutation) throws IOException {
     return getDelegate().checkAndMutate(row, family, qualifier, compareOp, value, mutation);
   }
+
+  @Override
+  public void setOperationTimeout(int i) {
+     getDelegate().setOperationTimeout(i);
+  }
+
+  @Override
+  public int getOperationTimeout() {
+    return getDelegate().getOperationTimeout();
+  }
+
+  @Override
+  public void setRpcTimeout(int i) {
+    getDelegate().setRpcTimeout(i);
+  }
+
+  @Override
+  public int getRpcTimeout() {
+    return getDelegate().getRpcTimeout();
+  }
 }

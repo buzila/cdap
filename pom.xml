@@ -131,14 +131,15 @@
     <gson.version>2.2.4</gson.version>
     <guava.version>13.0.1</guava.version>
     <guice.version>4.0</guice.version>
-    <hadoop.version>2.3.0</hadoop.version>
+    <hadoop.version>2.10.0</hadoop.version>
     <hadoop26.version>2.6.0</hadoop26.version>
     <hbase10.version>1.0.1.1</hbase10.version>
     <hbase10cdh.version>1.0.0-cdh5.4.4</hbase10cdh.version>
     <hbase10cdh550.version>1.0.0-cdh5.5.0</hbase10cdh550.version>
     <hbase11.version>1.1.1</hbase11.version>
     <hbase12cdh570.version>1.2.0-cdh5.7.0</hbase12cdh570.version>
-    <hive.version>1.2.1</hive.version>
+    <hbase135.version>1.3.5</hbase135.version>
+    <hive.version>2.3.6</hive.version>
     <hsql.version>2.2.4</hsql.version>
     <jsch.version>0.1.54</jsch.version>
     <jetty.version>6.1.22</jetty.version>
@@ -164,14 +165,14 @@
     <spark1.artifacts.dir>spark1_2.10</spark1.artifacts.dir>
     <spark2.artifacts.dir>spark2_2.11</spark2.artifacts.dir>
     <spark1.version>1.6.1</spark1.version>
-    <spark2.version>2.1.3</spark2.version>
+    <spark2.version>2.4.6</spark2.version>
     <sshd.version>1.7.0</sshd.version>
     <tephra.version>0.15.0-incubating</tephra.version>
-    <tez.version>0.8.4</tez.version>
+    <tez.version>0.9.2</tez.version>
     <thrift.version>0.9.3</thrift.version>
     <twill.version>0.14.0</twill.version>
     <unboundid.version>2.3.6</unboundid.version>
-    <zookeeper.version>3.4.5</zookeeper.version>
+    <zookeeper.version>3.4.14</zookeeper.version>
     <opentable.version>0.13.1</opentable.version>
     <dbcp.version>2.6.0</dbcp.version>
 
@@ -846,7 +847,7 @@
       <dependency>
         <groupId>org.apache.hbase</groupId>
         <artifactId>hbase-common</artifactId>
-        <version>${hbase10.version}</version>
+        <version>${hbase135.version}</version>
         <exclusions>
           <exclusion>
             <groupId>commons-logging</groupId>
@@ -857,7 +858,7 @@
       <dependency>
         <groupId>org.apache.hbase</groupId>
         <artifactId>hbase-client</artifactId>
-        <version>${hbase10.version}</version>
+        <version>${hbase135.version}</version>
         <exclusions>
           <exclusion>
             <groupId>commons-logging</groupId>
@@ -876,7 +877,7 @@
       <dependency>
         <groupId>org.apache.hbase</groupId>
         <artifactId>hbase-protocol</artifactId>
-        <version>${hbase10.version}</version>
+        <version>${hbase135.version}</version>
         <exclusions>
           <exclusion>
             <groupId>commons-logging</groupId>
@@ -887,7 +888,7 @@
       <dependency>
         <groupId>org.apache.hbase</groupId>
         <artifactId>hbase-server</artifactId>
-        <version>${hbase10.version}</version>
+        <version>${hbase135.version}</version>
         <exclusions>
           <exclusion>
             <groupId>commons-logging</groupId>
@@ -1286,7 +1287,7 @@
       <dependency>
         <groupId>org.apache.hbase</groupId>
         <artifactId>hbase-testing-util</artifactId>
-        <version>${hbase10.version}</version>
+        <version>${hbase135.version}</version>
         <scope>test</scope>
         <exclusions>
           <exclusion>

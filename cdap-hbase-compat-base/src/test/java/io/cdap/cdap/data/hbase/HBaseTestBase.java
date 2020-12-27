@@ -27,6 +27,7 @@ import org.apache.hadoop.hbase.MiniHBaseCluster;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.regionserver.HRegion;
+import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.JVMClusterUtil;
 import org.junit.rules.ExternalResource;
@@ -119,9 +120,9 @@ public abstract class HBaseTestBase extends ExternalResource {
     if (hbaseCluster != null) {
       TableName qualifiedTableName = TableName.valueOf(tableName);
       for (JVMClusterUtil.RegionServerThread t : hbaseCluster.getRegionServerThreads()) {
-        List<HRegion> serverRegions = t.getRegionServer().getOnlineRegions(qualifiedTableName);
+        List<Region> serverRegions = t.getRegionServer().getOnlineRegions(qualifiedTableName);
         List<Runnable> flushers = new ArrayList<>();
-        for (HRegion region : serverRegions) {
+        for (Region region : serverRegions) {
           flushers.add(createFlushRegion(region));
         }
         parallelRun(flushers);
@@ -142,9 +143,9 @@ public abstract class HBaseTestBase extends ExternalResource {
     if (hbaseCluster != null) {
       TableName qualifiedTableName = TableName.valueOf(tableName);
       for (JVMClusterUtil.RegionServerThread t : hbaseCluster.getRegionServerThreads()) {
-        List<HRegion> serverRegions = t.getRegionServer().getOnlineRegions(qualifiedTableName);
+        List<Region> serverRegions = t.getRegionServer().getOnlineRegions(qualifiedTableName);
         List<Runnable> compacters = new ArrayList<>();
-        for (HRegion region : serverRegions) {
+        for (Region region : serverRegions) {
           compacters.add(createCompactRegion(region, majorCompact));
         }
         parallelRun(compacters);
@@ -158,12 +159,12 @@ public abstract class HBaseTestBase extends ExternalResource {
   /**
    * Creates a {@link Runnable} that flushes the given HRegion when run.
    */
-  public Runnable createFlushRegion(final HRegion region) {
+  public Runnable createFlushRegion(final Region region) {
     return new Runnable() {
       @Override
       public void run() {
         try {
-          region.flushcache();
+          region.flush(true);
         } catch (IOException e) {
           throw Throwables.propagate(e);
         }
@@ -174,12 +175,12 @@ public abstract class HBaseTestBase extends ExternalResource {
   /**
    * Creates a {@link Runnable} that compacts the given HRegion when run.
    */
-  public Runnable createCompactRegion(final HRegion region, final boolean majorCompact) {
+  public Runnable createCompactRegion(final Region region, final boolean majorCompact) {
     return new Runnable() {
       @Override
       public void run() {
         try {
-          region.compactStores(majorCompact);
+          region.compact(majorCompact);
         } catch (IOException e) {
           throw Throwables.propagate(e);
         }

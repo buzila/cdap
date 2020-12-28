@@ -236,9 +236,7 @@
     <profile>
       <id>dist</id>
       <properties>
-        <package.deb.depends>--depends cdap --depends cdap-hbase-compat-1.0 --depends cdap-hbase-compat-1.0-cdh
-        --depends cdap-hbase-compat-1.1 --depends cdap-hbase-compat-1.0-cdh5.5.0
-        --depends cdap-hbase-compat-1.2-cdh5.7.0</package.deb.depends>
+        <package.deb.depends>--depends cdap --depends cdap-hbase-compat-1.3</package.deb.depends>
         <package.rpm.depends>--depends cdap --depends cdap-hbase-compat-1.0 --depends cdap-hbase-compat-1.0-cdh
         --depends cdap-hbase-compat-1.1 --depends cdap-hbase-compat-1.0-cdh5.5.0
         --depends cdap-hbase-compat-1.2-cdh5.7.0</package.rpm.depends>

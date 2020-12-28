@@ -128,7 +128,7 @@ public class LeaderElectionInfoServiceTest {
           }
         });
       }
-    }, 5, TimeUnit.SECONDS, 100, TimeUnit.MILLISECONDS);
+    }, 50, TimeUnit.SECONDS, 1000, TimeUnit.MILLISECONDS);
 
     // Fetch the static snapshot. It should be the same as the dynamic participants.
     SortedMap<Integer, LeaderElectionInfoService.Participant> snapshot = infoService.fetchCurrentParticipants();

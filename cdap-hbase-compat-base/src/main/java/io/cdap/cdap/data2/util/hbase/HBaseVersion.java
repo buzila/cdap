@@ -67,6 +67,7 @@ public class HBaseVersion {
     HBASE_10_CDH56("1.0-cdh5.6"),
     HBASE_11("1.1"),
     HBASE_12_CDH57("1.2-cdh5.7"),
+    HBASE_13("1.3"),
     UNKNOWN("unknown"),
     UNKNOWN_CDH("unknown-cdh");
 

@@ -50,20 +50,20 @@ import java.util.List;
 /**
  *
  */
-public class HBase12CDH570TableUtil extends HBaseTableUtil {
+public class HBase13TableUtil extends HBaseTableUtil {
 
-  private static final Logger LOG = LoggerFactory.getLogger(HBase12CDH570TableUtil.class);
+  private static final Logger LOG = LoggerFactory.getLogger(HBase13TableUtil.class);
 
   @Override
   public HTableDescriptorBuilder buildHTableDescriptor(TableId tableId) {
     Preconditions.checkArgument(tableId != null, "Table id should not be null");
-    return new HBase12CDH570HTableDescriptorBuilder(HTableNameConverter.toTableName(tablePrefix, tableId));
+    return new HBase13HTableDescriptorBuilder(HTableNameConverter.toTableName(tablePrefix, tableId));
   }
 
   @Override
   public HTableDescriptorBuilder buildHTableDescriptor(HTableDescriptor descriptorToCopy) {
     Preconditions.checkArgument(descriptorToCopy != null, "Table descriptor should not be null");
-    return new HBase12CDH570HTableDescriptorBuilder(descriptorToCopy);
+    return new HBase13HTableDescriptorBuilder(descriptorToCopy);
   }
 
   @Override
@@ -105,7 +105,7 @@ public class HBase12CDH570TableUtil extends HBaseTableUtil {
     Preconditions.checkArgument(ddlExecutor != null, "HBaseDDLExecutor should not be null");
     Preconditions.checkArgument(tableDescriptor != null, "Table descriptor should not be null.");
     TableName tableName = tableDescriptor.getTableName();
-    TableDescriptor tbd = HBase12CDH570TableDescriptorUtil.getTableDescriptor(tableDescriptor);
+    TableDescriptor tbd = HBase13TableDescriptorUtil.getTableDescriptor(tableDescriptor);
     ddlExecutor.modifyTable(tableName.getNamespaceAsString(), tableName.getQualifierAsString(), tbd);
   }
 
@@ -248,46 +248,46 @@ public class HBase12CDH570TableUtil extends HBaseTableUtil {
 
   @Override
   public ScanBuilder buildScan() {
-    return new HBase12CDH570ScanBuilder();
+    return new HBase13ScanBuilder();
   }
 
   @Override
   public ScanBuilder buildScan(Scan scan) throws IOException {
-    return new HBase12CDH570ScanBuilder(scan);
+    return new HBase13ScanBuilder(scan);
   }
 
   @Override
   public IncrementBuilder buildIncrement(byte[] row) {
-    return new HBase12CDH570IncrementBuilder(row);
+    return new HBase13IncrementBuilder(row);
   }
 
   @Override
   public PutBuilder buildPut(byte[] row) {
-    return new HBase12CDH570PutBuilder(row);
+    return new HBase13PutBuilder(row);
   }
 
   @Override
   public PutBuilder buildPut(Put put) {
-    return new HBase12CDH570PutBuilder(put);
+    return new HBase13PutBuilder(put);
   }
 
   @Override
   public GetBuilder buildGet(byte[] row) {
-    return new HBase12CDH570GetBuilder(row);
+    return new HBase13GetBuilder(row);
   }
 
   @Override
   public GetBuilder buildGet(Get get) {
-    return new HBase12CDH570GetBuilder(get);
+    return new HBase13GetBuilder(get);
   }
 
   @Override
   public DeleteBuilder buildDelete(byte[] row) {
-    return new HBase12CDH570DeleteBuilder(row);
+    return new HBase13DeleteBuilder(row);
   }
 
   @Override
   public DeleteBuilder buildDelete(Delete delete) {
-    return new HBase12CDH570DeleteBuilder(delete);
+    return new HBase13DeleteBuilder(delete);
   }
 }

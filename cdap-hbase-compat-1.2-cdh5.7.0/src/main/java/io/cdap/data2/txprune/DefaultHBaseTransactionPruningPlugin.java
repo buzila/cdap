@@ -16,8 +16,8 @@
 
 package io.cdap.data2.txprune;
 
-import io.cdap.cdap.data2.transaction.coprocessor.hbase12cdh570.DefaultTransactionProcessor;
-import io.cdap.cdap.data2.transaction.messaging.coprocessor.hbase12cdh570.MessageTableRegionObserver;
+import io.cdap.cdap.data2.transaction.coprocessor.hbase13.DefaultTransactionProcessor;
+import io.cdap.cdap.data2.transaction.messaging.coprocessor.hbase13.MessageTableRegionObserver;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.TableExistsException;

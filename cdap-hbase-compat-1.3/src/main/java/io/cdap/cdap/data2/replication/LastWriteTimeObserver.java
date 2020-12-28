@@ -37,7 +37,7 @@ import java.io.IOException;
  * For each region the writeTime of the last WAL entry is written to the REPLICATION_STATE table.
  */
 public class LastWriteTimeObserver extends BaseWALObserver {
-  private HBase12CDH570TableUpdater hBase12CDH570TableUpdater = null;
+  private HBase13TableUpdater hBase13TableUpdater = null;
   private static final Logger LOG = LoggerFactory.getLogger(LastWriteTimeObserver.class);
 
   @Override
@@ -45,15 +45,15 @@ public class LastWriteTimeObserver extends BaseWALObserver {
     LOG.info("LastWriteTimeObserver Start received.");
     String tableName = StatusUtils.getReplicationStateTableName(env.getConfiguration());
     HTableInterface htableInterface = env.getTable(TableName.valueOf(tableName));
-    hBase12CDH570TableUpdater =
-      new HBase12CDH570TableUpdater(ReplicationConstants.ReplicationStatusTool.WRITE_TIME_ROW_TYPE,
+    hBase13TableUpdater =
+      new HBase13TableUpdater(ReplicationConstants.ReplicationStatusTool.WRITE_TIME_ROW_TYPE,
                                     env.getConfiguration(), htableInterface);
   }
 
   @Override
   public void stop(CoprocessorEnvironment e) throws IOException {
     LOG.info("LastWriteTimeObserver Stop received.");
-    hBase12CDH570TableUpdater.cancelTimer();
+    hBase13TableUpdater.cancelTimer();
   }
 
   @Override
@@ -71,6 +71,6 @@ public class LastWriteTimeObserver extends BaseWALObserver {
               logKey.getTablename().toString(),
               logKey.getWriteTime(),
               logKey.getEncodedRegionName().toString());
-    hBase12CDH570TableUpdater.updateTime(new String(logKey.getEncodedRegionName(), "UTF-8"), logKey.getWriteTime());
+    hBase13TableUpdater.updateTime(new String(logKey.getEncodedRegionName(), "UTF-8"), logKey.getWriteTime());
   }
 }

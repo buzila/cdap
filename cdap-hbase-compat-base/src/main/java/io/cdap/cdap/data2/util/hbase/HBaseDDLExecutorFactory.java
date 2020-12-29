@@ -87,4 +87,9 @@ public class HBaseDDLExecutorFactory extends HBaseVersionSpecificFactory<HBaseDD
   protected String getHBase12CHD570ClassName() {
     return "io.cdap.cdap.data2.util.hbase.DefaultHBase12CDH570DDLExecutor";
   }
+
+  @Override
+  protected String getHBase13Classname() {
+    return "io.cdap.cdap.data2.util.hbase.DefaultHBase13DDLExecutor";
+  }
 }

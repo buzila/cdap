@@ -26,6 +26,7 @@ import io.cdap.cdap.explore.service.hive.Hive12CDH5ExploreService;
 import io.cdap.cdap.explore.service.hive.Hive12ExploreService;
 import io.cdap.cdap.explore.service.hive.Hive13ExploreService;
 import io.cdap.cdap.explore.service.hive.Hive14ExploreService;
+import io.cdap.cdap.explore.service.hive.Hive23ExploreService;
 import io.cdap.cdap.hive.ExploreUtils;
 import io.cdap.cdap.internal.asm.Classes;
 import org.apache.hadoop.conf.Configuration;
@@ -87,6 +88,7 @@ public class ExploreServiceUtils {
     HIVE_1_0(null, Hive14ExploreService.class),
     HIVE_1_1(null, Hive14ExploreService.class),
     HIVE_1_2(null, Hive14ExploreService.class),
+    HIVE_2_3(null, Hive23ExploreService.class),
     // Current latest non-CDH version is HIVE_1_2. Need to update HIVE_LATEST when newer non-CDH version is added.
     HIVE_LATEST(HIVE_1_2);
 
@@ -199,7 +201,10 @@ public class ExploreServiceUtils {
       return HiveSupport.HIVE_1_2;
     } else if (hiveVersion.startsWith(("2.1"))) {
       return HiveSupport.HIVE_1_2;
+    } else if (hiveVersion.startsWith(("2.3"))) {
+      return HiveSupport.HIVE_2_3;
     }
+
 
     if (useLatestVersionForUnsupported) {
       LOG.info("Hive distribution '{}' is not supported. Continuing with latest version of Hive module available.",

@@ -415,6 +415,7 @@ cdap_set_hbase() {
     1.1*) __compat=hbase-compat-1.1 ;;
     1.2-cdh*) __compat=hbase-compat-1.2-cdh5.7.0 ;; # 5.7 and 5.8 are compatible
     1.2*) __compat=hbase-compat-1.1 ;; # 1.1 and 1.2 are compatible
+    1.3*) __compat=hbase-compat-1.3 ;;
     "") die "Unable to determine HBase version! Aborting." ;;
     *)
       if [[ $(cdap_get_conf "hbase.version.resolution.strategy" "${CDAP_CONF}"/cdap-site.xml auto.strict) == 'auto.latest' ]]; then

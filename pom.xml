@@ -259,12 +259,12 @@
       <dependency>
         <groupId>org.apache.tephra</groupId>
         <artifactId>tephra-api</artifactId>
-        <version>${tephra.version}</version>
+        <version>${tephra_new.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.tephra</groupId>
         <artifactId>tephra-core</artifactId>
-        <version>${tephra.version}</version>
+        <version>${tephra_new.version}</version>
         <exclusions>
           <exclusion>
             <groupId>org.slf4j</groupId>
@@ -1242,7 +1242,7 @@
       <dependency>
         <groupId>org.apache.tephra</groupId>
         <artifactId>tephra-core</artifactId>
-        <version>${tephra.version}</version>
+        <version>${tephra_new.version}</version>
         <type>test-jar</type>
         <scope>test</scope>
       </dependency>

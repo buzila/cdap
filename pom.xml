@@ -173,8 +173,8 @@
     <spark1.version>1.6.1</spark1.version>
     <spark2.version>2.4.6</spark2.version>
     <sshd.version>1.7.0</sshd.version>
-    <tephra.version>0.16.0-DataProc</tephra.version>
-    <tephra_new.version>0.16.0</tephra_new.version>
+    <tephra.version>0.16.0</tephra.version>
+    <tephra_new.version>0.16.0-DataProc</tephra_new.version>
     <tez.version>0.9.2</tez.version>
     <thrift.version>0.9.3-1</thrift.version>
     <twill.version>0.14.0-DataProc</twill.version>

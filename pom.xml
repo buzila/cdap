@@ -1700,7 +1700,7 @@
             </dependency>
           </dependencies>
         </plugin>
-        <plugin>
+        <!--plugin>
           <groupId>org.apache.rat</groupId>
           <artifactId>apache-rat-plugin</artifactId>
           <version>0.13</version>
@@ -1744,11 +1744,11 @@
                   <exlcude>**/*.patch</exlcude>
                   <exclude>**/logrotate.d/**</exclude>
                   <exclude>**/limits.d/**</exclude>
-                  <!-- Excludes AVRO schema files -->
+                  <! Excludes AVRO schema files >
                   <exclude>**/*.avsc</exclude>
-                  <!-- Excludes examples by default, include it in the examples profile -->
+                  <! Excludes examples by default, include it in the examples profile >
                   <exclude>cdap-examples/**</exclude>
-                  <!-- Excludes app-templates by default, include it in the templates profile -->
+                  <! Excludes app-templates by default, include it in the templates profile >
                   <exclude>cdap-app-templates/**</exclude>
                   <exclude>**/*.json</exclude>
                   <exclude>**/resources/**/*.properties</exclude>
@@ -1762,7 +1762,7 @@
               </configuration>
             </execution>
           </executions>
-        </plugin>
+        </plugin-->
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-checkstyle-plugin</artifactId>

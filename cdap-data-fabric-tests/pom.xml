@@ -46,7 +46,7 @@
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-hbase-compat-base</artifactId>
-      <version>6.5.0-SNAPSHOT</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
@@ -64,7 +64,7 @@
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-security</artifactId>
-      <version>6.5.0-SNAPSHOT</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
@@ -84,14 +84,14 @@
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-data-fabric</artifactId>
-      <version>6.5.0-SNAPSHOT</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-hbase-compat-1.0</artifactId>
-      <version>6.5.0-SNAPSHOT</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
@@ -117,7 +117,7 @@
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-common</artifactId>
-      <version>6.5.0-SNAPSHOT</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>

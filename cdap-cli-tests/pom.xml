@@ -42,7 +42,7 @@
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-common</artifactId>
-      <version>${project.version}</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
@@ -93,7 +93,7 @@
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-standalone</artifactId>
-      <version>${project.version}</version>
+      <version>${project.fake.test.version}</version>
       <scope>test</scope>
       <type>test-jar</type>
       <exclusions>
@@ -126,14 +126,14 @@
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-app-fabric</artifactId>
-      <version>${project.version}</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>io.cdap.cdap</groupId>
       <artifactId>cdap-security</artifactId>
-      <version>${project.version}</version>
+      <version>${project.fake.test.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>

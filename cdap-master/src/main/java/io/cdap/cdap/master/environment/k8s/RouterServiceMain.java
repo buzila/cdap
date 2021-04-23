@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019 Cask Data, Inc.
+ * Copyright © 2019-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -17,11 +17,14 @@
 package io.cdap.cdap.master.environment.k8s;
 
 import com.google.common.util.concurrent.Service;
+import com.google.inject.Binding;
 import com.google.inject.Injector;
+import com.google.inject.Key;
 import com.google.inject.Module;
 import io.cdap.cdap.common.conf.CConfiguration;
 import io.cdap.cdap.common.conf.Constants;
 import io.cdap.cdap.common.guice.DFSLocationModule;
+import io.cdap.cdap.common.guice.ZKClientModule;
 import io.cdap.cdap.common.logging.LoggingContext;
 import io.cdap.cdap.common.logging.ServiceLoggingContext;
 import io.cdap.cdap.gateway.router.NettyRouter;
@@ -30,9 +33,13 @@ import io.cdap.cdap.master.spi.environment.MasterEnvironment;
 import io.cdap.cdap.master.spi.environment.MasterEnvironmentContext;
 import io.cdap.cdap.messaging.guice.MessagingClientModule;
 import io.cdap.cdap.proto.id.NamespaceId;
+import io.cdap.cdap.security.guice.SecurityModule;
 import io.cdap.cdap.security.guice.SecurityModules;
+import io.cdap.cdap.security.impersonation.SecurityUtil;
+import org.apache.twill.zookeeper.ZKClientService;
 
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import javax.annotation.Nullable;
 
@@ -51,13 +58,28 @@ public class RouterServiceMain extends AbstractServiceMain<EnvironmentOptions> {
   @Override
   protected List<Module> getServiceModules(MasterEnvironment masterEnv,
                                            EnvironmentOptions options, CConfiguration cConf) {
-    return Arrays.asList(
-      new MessagingClientModule(),
-      new RouterModules().getDistributedModules(),
-      new DFSLocationModule(),
-      // Use the Standalone module for now, until we have proper support for key management for authentication in K8s
-      new SecurityModules().getStandaloneModules()
-    );
+    List<Module> modules = new ArrayList<>();
+    modules.add(new MessagingClientModule());
+    modules.add(new RouterModules().getDistributedModules());
+    modules.add(new DFSLocationModule());
+    modules.addAll(getSecurityModules(cConf));
+
+    return modules;
+  }
+
+  private List<Module> getSecurityModules(CConfiguration cConf) {
+    if (!SecurityUtil.isManagedSecurity(cConf)) {
+      return Collections.singletonList(new SecurityModules().getStandaloneModules());
+    }
+
+    List<Module> modules = new ArrayList<>();
+    SecurityModule securityModule = SecurityModules.getDistributedModule(cConf);
+    modules.add(securityModule);
+    if (securityModule.requiresZKClient()) {
+      modules.add(new ZKClientModule());
+    }
+
+    return modules;
   }
 
   @Override
@@ -65,15 +87,20 @@ public class RouterServiceMain extends AbstractServiceMain<EnvironmentOptions> {
                              List<? super AutoCloseable> closeableResources,
                              MasterEnvironment masterEnv, MasterEnvironmentContext masterEnvContext,
                              EnvironmentOptions options) {
+    Binding<ZKClientService> zkBinding = injector.getExistingBinding(Key.get(ZKClientService.class));
+    if (zkBinding != null) {
+      services.add(zkBinding.getProvider().get());
+    }
     services.add(injector.getInstance(NettyRouter.class));
   }
 
   @Nullable
   @Override
   protected LoggingContext getLoggingContext(EnvironmentOptions options) {
-    return new ServiceLoggingContext(NamespaceId.SYSTEM.getNamespace(),
-                                     Constants.Logging.COMPONENT_NAME,
-                                     Constants.Service.GATEWAY);
+    return new ServiceLoggingContext(
+        NamespaceId.SYSTEM.getNamespace(),
+        Constants.Logging.COMPONENT_NAME,
+        Constants.Service.GATEWAY);
   }
 
   @Override

@@ -20,7 +20,6 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Closeables;
-import com.google.common.io.Files;
 import com.google.common.io.InputSupplier;
 import com.google.common.util.concurrent.Service;
 import com.google.gson.Gson;
@@ -314,6 +313,7 @@ public abstract class AppFabricTestBase {
     cConf.set(Constants.CFG_LOCAL_DATA_DIR, tmpFolder.newFolder("data").getAbsolutePath());
     cConf.set(Constants.AppFabric.OUTPUT_DIR, System.getProperty("java.io.tmpdir"));
     cConf.set(Constants.AppFabric.TEMP_DIR, System.getProperty("java.io.tmpdir"));
+    cConf.setInt(Constants.Capability.AUTO_INSTALL_THREADS, 5);
     cConf.setBoolean(Constants.Dangerous.UNRECOVERABLE_RESET, true);
     String updateSchedules = System.getProperty(Constants.AppFabric.APP_UPDATE_SCHEDULES);
     if (updateSchedules != null) {
@@ -550,7 +550,7 @@ public abstract class AppFabricTestBase {
 
     File artifactJar = buildAppArtifact(application, application.getSimpleName(), manifest);
     File expandDir = tmpFolder.newFolder();
-    BundleJarUtil.unJar(Locations.toLocation(artifactJar), expandDir);
+    BundleJarUtil.prepareClassLoaderFolder(Locations.toLocation(artifactJar), expandDir);
 
     String versionedApiPath = getVersionedAPIPath("apps/", apiVersion, namespace);
     HttpRequest.Builder builder = HttpRequest.post(getEndPoint(versionedApiPath).toURL())
@@ -1378,7 +1378,7 @@ public abstract class AppFabricTestBase {
 
   protected File buildAppArtifact(Class<?> cls, Manifest manifest, File destination) throws IOException {
     Location appJar = AppJarHelper.createDeploymentJar(locationFactory, cls, manifest);
-    Files.copy(Locations.newInputSupplier(appJar), destination);
+    Locations.linkOrCopyOverwrite(appJar, destination);
     return destination;
   }
 

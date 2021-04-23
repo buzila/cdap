@@ -45,6 +45,7 @@ import io.cdap.cdap.etl.api.batch.BatchSource;
 import io.cdap.cdap.etl.api.condition.Condition;
 import io.cdap.cdap.etl.api.join.AutoJoiner;
 import io.cdap.cdap.etl.api.join.AutoJoinerContext;
+import io.cdap.cdap.etl.api.join.JoinCondition;
 import io.cdap.cdap.etl.api.join.JoinDefinition;
 import io.cdap.cdap.etl.api.join.JoinStage;
 import io.cdap.cdap.etl.api.validation.InvalidConfigPropertyException;
@@ -65,6 +66,8 @@ import io.cdap.cdap.etl.proto.v2.ETLStage;
 import io.cdap.cdap.etl.proto.v2.spec.PipelineSpec;
 import io.cdap.cdap.etl.proto.v2.spec.PluginSpec;
 import io.cdap.cdap.etl.proto.v2.spec.StageSpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -83,6 +86,7 @@ import java.util.stream.Collectors;
  * @param <P> the pipeline specification generated from the config
  */
 public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends PipelineSpec> {
+  private static final Logger LOG = LoggerFactory.getLogger(PipelineSpecGenerator.class);
   private static final Set<String> VALID_ERROR_INPUTS = ImmutableSet.of(
     BatchSource.PLUGIN_TYPE, Transform.PLUGIN_TYPE, BatchAggregator.PLUGIN_TYPE, ErrorTransform.PLUGIN_TYPE);
   protected final PluginConfigurer pluginConfigurer;
@@ -164,9 +168,9 @@ public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends Pipel
       DefaultPipelineConfigurer pluginConfigurer = pluginConfigurers.get(stageName);
 
       ConfiguredStage configuredStage = configureStage(stage, validatedPipeline, pluginConfigurer);
-      schemaPropagator.propagateSchema(configuredStage.stageSpec);
+      schemaPropagator.propagateSchema(configuredStage.getStageSpec());
 
-      specBuilder.addStage(configuredStage.stageSpec);
+      specBuilder.addStage(configuredStage.getStageSpec());
       for (Map.Entry<String, String> propertyEntry : configuredStage.pipelineProperties.entrySet()) {
         propertiesFromStages.put(propertyEntry.getKey(), propertyEntry.getValue(), stageName);
       }
@@ -210,8 +214,8 @@ public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends Pipel
    * @return the spec for the stage
    * @throws ValidationException if the plugin threw an exception during configuration
    */
-  private ConfiguredStage configureStage(ETLStage stage, ValidatedPipeline validatedPipeline,
-                                         DefaultPipelineConfigurer pluginConfigurer) throws ValidationException {
+  protected ConfiguredStage configureStage(ETLStage stage, ValidatedPipeline validatedPipeline,
+                                           DefaultPipelineConfigurer pluginConfigurer) throws ValidationException {
     String stageName = stage.getName();
     ETLPlugin stagePlugin = stage.getPlugin();
 
@@ -325,8 +329,10 @@ public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends Pipel
       throw e;
     } catch (NullPointerException e) {
       // handle the case where plugin throws null pointer exception, this is to avoid having 'null' as error message
-      collector.addFailure("Null error occurred while configuring the stage.", null)
+      collector.addFailure(String.format("Null error occurred while configuring the stage %s.", stageName), null)
         .withStacktrace(e.getStackTrace());
+      // Log the NullPointerException for debugging:
+      LOG.error(String.format("Null error occurred while configuring the stage %s.", stageName), e);
     } catch (Exception e) {
       collector.addFailure(String.format("Error encountered while configuring the stage: '%s'",
                                          e.getMessage()), null).withStacktrace(e.getStackTrace());
@@ -349,6 +355,15 @@ public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends Pipel
     return specBuilder;
   }
 
+  protected void validateJoinCondition(String stageName, JoinCondition condition, FailureCollector collector) {
+    if (engine == Engine.MAPREDUCE && condition.getOp() != JoinCondition.Op.KEY_EQUALITY) {
+      collector.addFailure(
+        String.format("Join stage '%s' uses a %s condition, which is not supported with the MapReduce engine.",
+                      stageName, condition.getOp()),
+        "Switch to a different execution engine.");
+    }
+  }
+
   private void configureAutoJoiner(String stageName, AutoJoiner autoJoiner, DefaultStageConfigurer stageConfigurer,
                                    FailureCollector collector) {
     AutoJoinerContext autoContext = DefaultAutoJoinerContext.from(stageConfigurer.getInputSchemas(),
@@ -357,6 +372,8 @@ public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends Pipel
     if (joinDefinition == null) {
       return;
     }
+
+    validateJoinCondition(stageName, joinDefinition.getCondition(), collector);
 
     stageConfigurer.setOutputSchema(joinDefinition.getOutputSchema());
     Set<String> inputStages = stageConfigurer.getInputSchemas().keySet();
@@ -468,7 +485,7 @@ public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends Pipel
    * @return the order to configure the stages in
    * @throws IllegalArgumentException if the pipeline is invalid
    */
-  private ValidatedPipeline validateConfig(ETLConfig config) {
+  protected ValidatedPipeline validateConfig(ETLConfig config) {
     config.validate();
     if (config.getStages().isEmpty()) {
       throw new IllegalArgumentException("A pipeline must contain at least one stage.");
@@ -630,13 +647,17 @@ public abstract class PipelineSpecGenerator<C extends ETLConfig, P extends Pipel
   /**
    * Just a container for StageSpec and pipeline properties set by the stage
    */
-  private static class ConfiguredStage {
+  protected static class ConfiguredStage {
     private final StageSpec stageSpec;
     private final Map<String, String> pipelineProperties;
 
     private ConfiguredStage(StageSpec stageSpec, Map<String, String> pipelineProperties) {
       this.stageSpec = stageSpec;
       this.pipelineProperties = pipelineProperties;
+    }
+
+    public StageSpec getStageSpec() {
+      return stageSpec;
     }
   }
 

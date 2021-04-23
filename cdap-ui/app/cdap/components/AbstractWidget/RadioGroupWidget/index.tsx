@@ -74,6 +74,9 @@ const RadioGroupWidgetView: React.FC<IRadioGroupProps> = ({
   if (!isModelValid) {
     error = `Unknown value ${value} specified.`;
   }
+  if (typeof value === 'undefined') {
+    error = 'No value specified';
+  }
 
   function updateModel(e) {
     onChange(e.target.value);
@@ -81,12 +84,12 @@ const RadioGroupWidgetView: React.FC<IRadioGroupProps> = ({
 
   return (
     <div>
-      <If condition={error}>
+      <If condition={error && !disabled}>
         <div className="text-danger">{error}</div>
       </If>
       <RadioGroup
         className={classnames({ [classes.inlineRadio]: layout === 'inline' })}
-        value={value.toString()}
+        value={value ? value.toString() : null}
         onChange={updateModel}
         name={dataCy}
       >

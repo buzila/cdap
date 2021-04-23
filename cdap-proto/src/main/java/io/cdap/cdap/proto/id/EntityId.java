@@ -1,5 +1,5 @@
 /*
- * Copyright © 2015-2019 Cask Data, Inc.
+ * Copyright © 2015-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -120,7 +120,8 @@ public abstract class EntityId {
   }
 
   private final EntityType entity;
-  private Vector<EntityId> hierarchy;
+  // Hierarchy should be transient since it acts like a cache variable and should not be JSON serialized.
+  private transient Vector<EntityId> hierarchy;
 
   protected EntityId(EntityType entity) {
     if (entity == null) {
@@ -195,6 +196,11 @@ public abstract class EntityId {
     // for artifacts get till version (artifacts always have version
     if (entityType == EntityType.ARTIFACT) {
       extractedParts = metadataEntity.head(MetadataEntity.VERSION);
+    }
+
+    // for plugins get till plugin name
+    if (entityType == EntityType.PLUGIN) {
+      extractedParts = metadataEntity.head(MetadataEntity.PLUGIN);
     }
     extractedParts.iterator().forEachRemaining(keyValue -> values.add(keyValue.getValue()));
     return entityType.fromIdParts(values);

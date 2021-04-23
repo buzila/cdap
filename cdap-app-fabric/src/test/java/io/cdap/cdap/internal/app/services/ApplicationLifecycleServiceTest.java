@@ -115,7 +115,7 @@ public class ApplicationLifecycleServiceTest extends AppFabricTestBase {
     Location appJar = AppJarHelper.createDeploymentJar(locationFactory, MissingMapReduceWorkflowApp.class);
     File appJarFile = new File(tmpFolder.newFolder(),
                                String.format("%s-%s.jar", artifactId.getName(), artifactId.getVersion().getVersion()));
-    Files.copy(Locations.newInputSupplier(appJar), appJarFile);
+    Locations.linkOrCopyOverwrite(appJar, appJarFile);
     appJar.delete();
 
     try {
@@ -168,7 +168,7 @@ public class ApplicationLifecycleServiceTest extends AppFabricTestBase {
     Location appJar = AppJarHelper.createDeploymentJar(locationFactory, appWithWorkflowClass);
     File appJarFile = new File(tmpFolder.newFolder(),
                                String.format("%s-%s.jar", artifactId.getName(), artifactId.getVersion().getVersion()));
-    Files.copy(Locations.newInputSupplier(appJar), appJarFile);
+    Locations.linkOrCopyOverwrite(appJar, appJarFile);
     appJar.delete();
 
     //deploy app
@@ -183,7 +183,8 @@ public class ApplicationLifecycleServiceTest extends AppFabricTestBase {
     }
     for (String capability : declaredAnnotation.capabilities()) {
       CapabilityConfig capabilityConfig = new CapabilityConfig("Test", CapabilityStatus.ENABLED, capability,
-                                                               Collections.emptyList(), Collections.emptyList());
+                                                               Collections.emptyList(), Collections.emptyList(),
+                                                               Collections.emptyList());
       capabilityWriter.addOrUpdateCapability(capability, CapabilityStatus.ENABLED, capabilityConfig);
     }
     applicationLifecycleService
@@ -284,7 +285,7 @@ public class ApplicationLifecycleServiceTest extends AppFabricTestBase {
     Location appJar = createDeploymentJar(locationFactory, AppWithProgramsUsingGuava.class);
     File appJarFile = new File(tmpFolder.newFolder(),
                                String.format("%s-%s.jar", artifactId.getArtifact(), artifactId.getVersion()));
-    Files.copy(Locations.newInputSupplier(appJar), appJarFile);
+    Locations.linkOrCopyOverwrite(appJar, appJarFile);
     appJar.delete();
 
     applicationLifecycleService.deployAppAndArtifact(NamespaceId.DEFAULT, "appName",

@@ -41,6 +41,8 @@ import uuidV4 from 'uuid/v4';
 import uniqBy from 'lodash/uniqBy';
 import cloneDeep from 'lodash/cloneDeep';
 import { CLOUD } from 'services/global-constants';
+import { Observable } from 'rxjs/Observable';
+import { map } from 'rxjs/operators';
 
 // Filter certain preferences from being shown in the run time arguments
 // They are being represented in other places (like selected compute profile).
@@ -232,12 +234,16 @@ const updatePipeline = () => {
     }
   );
 
-  publishObservable.subscribe(() => {
-    PipelineDetailStore.dispatch({
-      type: PipelineDetailActions.SET_CONFIG,
-      payload: { config },
-    });
-  });
+  // Use pipe/map and not subscribe to not break error handling on other observers
+  publishObservable.pipe(
+    map((returnVal) => {
+      PipelineDetailStore.dispatch({
+        type: PipelineDetailActions.SET_CONFIG,
+        payload: { config },
+      });
+      return returnVal;
+    })
+  );
 
   return publishObservable;
 };
@@ -319,13 +325,14 @@ const fetchAndUpdateRuntimeArgs = () => {
     appId: PipelineDetailStore.getState().name,
   };
 
-  let observable$ = MyPipelineApi.fetchMacros(params).combineLatest([
+  let observable$ = Observable.forkJoin(
+    MyPipelineApi.fetchMacros(params),
     MyPreferenceApi.getAppPreferences(params),
     // This is required to resolve macros from preferences
     // Say DEFAULT_STREAM is a namespace level preference used as a macro
     // in one of the plugins in the pipeline.
-    MyPreferenceApi.getAppPreferencesResolved(params),
-  ]);
+    MyPreferenceApi.getAppPreferencesResolved(params)
+  );
 
   observable$.subscribe((res) => {
     let macrosSpec = res[0];

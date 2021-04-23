@@ -19,9 +19,8 @@ import request from 'request';
 import fs from 'fs';
 import log4js from 'log4js';
 import { REQUEST_ORIGIN_ROUTER, REQUEST_ORIGIN_MARKET, constructUrl, deconstructUrl, isVerifiedMarketHost} from 'server/url-helper';
-import { extractConfig } from 'server/config/parser';
 import * as sessionToken from 'server/token';
-
+import { stripAuthHeadersInProxyMode } from 'server/express';
 const log = log4js.getLogger('default');
 /**
  * Aggregator
@@ -30,17 +29,19 @@ const log = log4js.getLogger('default');
  *
  * @param {Object} SockJS connection
  */
-function Aggregator(conn) {
+function Aggregator(conn, cdapConfig) {
   // make 'new' optional
   if (!(this instanceof Aggregator)) {
     return new Aggregator(conn);
   }
-  this.cdapConfig = null;
+  this.cdapConfig = cdapConfig;
   this.connection = conn;
 
-  this.populateCdapConfig().then(this.initializeEventListeners.bind(this));
+  this.initializeEventListeners();
   this.isSessionValid = false;
 }
+
+Aggregator.prototype.stripAuthHeaderInProxyMode = stripAuthHeadersInProxyMode;
 
 Aggregator.prototype.initializeEventListeners = function() {
   /**
@@ -88,20 +89,6 @@ Aggregator.prototype.validateSession = function(message) {
     return false;
   }
   return true;
-};
-
-Aggregator.prototype.populateCdapConfig = async function() {
-  let cdapConfig, securityConfig;
-  try {
-    cdapConfig = await extractConfig('cdap');
-    securityConfig = await extractConfig('security');
-    this.cdapConfig = { ...cdapConfig, ...securityConfig };
-  } catch (e) {
-    log.error(
-      "[ERROR]: Unable to parse CDAP config. CDAP UI Proxy won't be able to serve any request to the client: " +
-        e
-    );
-  }
 };
 
 /**
@@ -164,7 +151,7 @@ Aggregator.prototype.pushConfiguration = function(resource) {
 
   this.connection.write(
     JSON.stringify({
-      resource: resource,
+      resource: this.stripAuthHeaderInProxyMode(this.cdapConfig, resource),
       statusCode: statusCode,
       response: config,
     })
@@ -225,7 +212,24 @@ function stripResource(key, value) {
  */
 function emitResponse(resource, error, response, body) {
   var timeDiff = Date.now() - resource.startTs;
-
+  let authMode = this.cdapConfig['security.authentication.mode'];
+  /**
+   * In proxy mode, we stub the 401 response from backend with 500.
+   * This is because the proxy is still using an auth token that is expired.
+   * The client (broweser UI) does not understand this and will redirect to login page
+   * But since security is not enabled from a ui perspective it will again redirect
+   * to the destination page causing an infinite loop.
+   *
+   * This is to break the cycle. This will never happen in an ideal case. This is an
+   * escape hatch when we go to the worst case.
+   * @param {*} response - response from backend
+   */
+  const getResponseCode = (response) => {
+    if (authMode === 'PROXY' && response && response.statusCode === 401) {
+      return 500;
+    }
+    return response && response.statusCode;
+  };
   if (error) {
     log.debug('[ERROR]: (id: ' + resource.id + ', url: ' + resource.url + ')');
     log.trace(
@@ -244,10 +248,10 @@ function emitResponse(resource, error, response, body) {
     this.connection.write(
       JSON.stringify(
         {
-          resource: newResource,
+          resource: this.stripAuthHeaderInProxyMode(this.cdapConfig, newResource),
           error: error,
           warning: error.toString(),
-          statusCode: response && response.statusCode,
+          statusCode: getResponseCode(response),
           response: response && response.body,
         },
         stripResource
@@ -273,8 +277,8 @@ function emitResponse(resource, error, response, body) {
     this.connection.write(
       JSON.stringify(
         {
-          resource: newResource,
-          statusCode: response.statusCode,
+          resource: this.stripAuthHeaderInProxyMode(this.cdapConfig, newResource),
+          statusCode: getResponseCode(response),
           response: body,
         },
         stripResource
@@ -320,6 +324,13 @@ function onSocketData(message) {
         break;
       case 'request':
         r.startTs = Date.now();
+        if ((!r.requestOrigin || r.requestOrigin === REQUEST_ORIGIN_ROUTER) && this.cdapConfig['security.authentication.mode'] === 'PROXY') {
+          if (!r.headers) {
+            r.headers = {};
+          }
+          r.headers.Authorization = this.connection.authToken;
+          r.headers[this.cdapConfig['security.authentication.proxy.user.identity.header']] = this.connection.userid;
+        }
         log.debug('[REQUEST]: (method: ' + r.method + ', id: ' + r.id + ', url: ' + r.url + ')');
         request(r, emitResponse.bind(this, r)).on('error', function(err) {
           log.error('[ERROR]: (url: ' + r.url + ') ' + err.message);

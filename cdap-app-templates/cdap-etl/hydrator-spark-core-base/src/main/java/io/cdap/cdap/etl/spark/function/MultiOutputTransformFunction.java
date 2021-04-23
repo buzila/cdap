@@ -20,6 +20,9 @@ import io.cdap.cdap.etl.api.SplitterTransform;
 import io.cdap.cdap.etl.common.RecordInfo;
 import io.cdap.cdap.etl.common.TrackedMultiOutputTransform;
 import io.cdap.cdap.etl.spark.CombinedEmitter;
+import org.apache.spark.api.java.function.FlatMapFunction;
+
+import java.util.Iterator;
 
 /**
  * Function that uses a MultiOutputTransform to perform a flatmap.
@@ -27,26 +30,27 @@ import io.cdap.cdap.etl.spark.CombinedEmitter;
  *
  * @param <T> type of input object
  */
-public class MultiOutputTransformFunction<T> implements FlatMapFunc<T, RecordInfo<Object>> {
+public class MultiOutputTransformFunction<T> implements FlatMapFunction<T, RecordInfo<Object>> {
   private final PluginFunctionContext pluginFunctionContext;
+  private final FunctionCache functionCache;
   private transient TrackedMultiOutputTransform<T, Object> transform;
   private transient CombinedEmitter<Object> emitter;
 
-  public MultiOutputTransformFunction(PluginFunctionContext pluginFunctionContext) {
+  public MultiOutputTransformFunction(PluginFunctionContext pluginFunctionContext, FunctionCache functionCache) {
     this.pluginFunctionContext = pluginFunctionContext;
+    this.functionCache = functionCache;
   }
 
   @Override
-  public Iterable<RecordInfo<Object>> call(T input) throws Exception {
+  public Iterator<RecordInfo<Object>> call(T input) throws Exception {
     if (transform == null) {
-      SplitterTransform<T, Object> plugin = pluginFunctionContext.createPlugin();
-      plugin.initialize(pluginFunctionContext.createBatchRuntimeContext());
+      SplitterTransform<T, Object> plugin = pluginFunctionContext.createAndInitializePlugin(functionCache);
       transform = new TrackedMultiOutputTransform<>(plugin, pluginFunctionContext.createStageMetrics(),
                                                     pluginFunctionContext.getDataTracer());
       emitter = new CombinedEmitter<>(pluginFunctionContext.getStageName());
     }
     emitter.reset();
     transform.transform(input, emitter);
-    return emitter.getEmitted();
+    return emitter.getEmitted().iterator();
   }
 }

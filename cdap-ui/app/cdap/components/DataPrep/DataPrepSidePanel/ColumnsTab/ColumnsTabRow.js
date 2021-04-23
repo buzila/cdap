@@ -20,8 +20,9 @@ import React, { Component } from 'react';
 import { preventPropagation } from 'services/helpers';
 import isEqual from 'lodash/isEqual';
 import classnames from 'classnames';
+import { CSSTransition } from 'react-transition-group';
 
-export default class ColumnsTabRow extends Component {
+class ColumnsTabRow extends Component {
   constructor(props) {
     super(props);
 
@@ -61,37 +62,43 @@ export default class ColumnsTabRow extends Component {
   }
 
   render() {
-    let rowInfo = this.props.rowInfo || {};
-    let general = rowInfo.general || {};
-    let { empty: empty = 0, 'non-null': nonEmpty = 100 } = general;
+    const rowInfo = this.props.rowInfo || {};
+    const general = rowInfo.general || {};
+    const { empty: empty = 0, 'non-null': nonEmpty = 100 } = general;
 
-    let nonNull = Math.ceil(nonEmpty - empty);
+    // Round number to next lowest .1%
+    // Number.toFixed() can round up and leave .0 on integers
+    const nonNull = Math.floor((nonEmpty - empty) * 10) / 10;
+
     return (
-      <tr
-        className={classnames({
-          selected: this.state.selected,
-        })}
-        onClick={this.props.onShowDetails}
-      >
-        <td />
-        <td>
-          <span
-            onClick={this.toggleRowSelect}
-            className={classnames('fa row-header-checkbox', {
-              'fa-square-o': !this.state.selected,
-              'fa-check-square': this.state.selected,
-            })}
-          />
-        </td>
-        <td>
-          <span>{this.props.index + 1}</span>
-        </td>
-        <td>{this.props.columnName}</td>
-        <td className="text-right">
-          <span>{`${nonNull}%`}</span>
-        </td>
-        <td />
-      </tr>
+      <CSSTransition in={this.props.isNew} timeout={4000} classNames="is-new" appear>
+        <tr
+          className={classnames({
+            selected: this.state.selected,
+          })}
+          onClick={this.props.onShowDetails}
+          ref={this.props.innerRef}
+        >
+          <td />
+          <td>
+            <span
+              onClick={this.toggleRowSelect}
+              className={classnames('fa row-header-checkbox', {
+                'fa-square-o': !this.state.selected,
+                'fa-check-square': this.state.selected,
+              })}
+            />
+          </td>
+          <td>
+            <span>{this.props.index + 1}</span>
+          </td>
+          <td className="column-name">{this.props.columnName}</td>
+          <td className="text-right non-null">
+            <span>{`${nonNull}%`}</span>
+          </td>
+          <td />
+        </tr>
+      </CSSTransition>
     );
   }
 }
@@ -102,4 +109,13 @@ ColumnsTabRow.propTypes = {
   columnName: PropTypes.string,
   selected: PropTypes.bool,
   setSelect: PropTypes.func,
+  isNew: PropTypes.bool,
+  innerRef: PropTypes.oneOfType([
+    PropTypes.func,
+    PropTypes.shape({ current: PropTypes.elementType }),
+  ]),
 };
+
+export default React.forwardRef((props, ref) => {
+  return <ColumnsTabRow {...props} innerRef={ref} />;
+});

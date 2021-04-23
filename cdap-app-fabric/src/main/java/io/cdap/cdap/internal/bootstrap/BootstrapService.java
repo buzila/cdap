@@ -24,7 +24,9 @@ import io.cdap.cdap.common.logging.LogSamplers;
 import io.cdap.cdap.common.logging.Loggers;
 import io.cdap.cdap.common.service.Retries;
 import io.cdap.cdap.common.service.RetryStrategies;
+import io.cdap.cdap.internal.app.services.SystemProgramManagementService;
 import io.cdap.cdap.internal.bootstrap.executor.BootstrapStepExecutor;
+import io.cdap.cdap.internal.capability.CapabilityManagementService;
 import io.cdap.cdap.internal.sysapp.SystemAppManagementService;
 import io.cdap.cdap.proto.bootstrap.BootstrapResult;
 import io.cdap.cdap.proto.bootstrap.BootstrapStepResult;
@@ -53,6 +55,8 @@ public class BootstrapService extends AbstractIdleService {
   private final BootstrapConfigProvider bootstrapConfigProvider;
   private final BootstrapStore bootstrapStore;
   private final SystemAppManagementService systemAppManagementService;
+  private final CapabilityManagementService capabilityManagementService;
+  private final SystemProgramManagementService systemProgramManagementService;
   private final Map<BootstrapStep.Type, BootstrapStepExecutor> bootstrapStepExecutors;
   private final AtomicBoolean bootstrapping;
   private BootstrapConfig config;
@@ -61,13 +65,17 @@ public class BootstrapService extends AbstractIdleService {
   @Inject
   BootstrapService(BootstrapConfigProvider bootstrapConfigProvider, BootstrapStore bootstrapStore,
                    Map<BootstrapStep.Type, BootstrapStepExecutor> bootstrapStepExecutors,
-                   SystemAppManagementService systemAppManagementService) {
+                   SystemAppManagementService systemAppManagementService,
+                   CapabilityManagementService capabilityManagementService,
+                   SystemProgramManagementService systemProgramManagementService) {
     this.bootstrapConfigProvider = bootstrapConfigProvider;
     this.bootstrapStore = bootstrapStore;
     this.systemAppManagementService = systemAppManagementService;
     this.config = BootstrapConfig.EMPTY;
     this.bootstrapStepExecutors = Collections.unmodifiableMap(bootstrapStepExecutors);
     this.bootstrapping = new AtomicBoolean(false);
+    this.systemProgramManagementService = systemProgramManagementService;
+    this.capabilityManagementService = capabilityManagementService;
   }
 
   @Override
@@ -95,6 +103,9 @@ public class BootstrapService extends AbstractIdleService {
       } catch (Exception e) {
         LOG.info("SystemAppManagementService could not start due to exception.", e);
       }
+      // TODO - Move this back to AppFabricServer once CDAP-17578 is fixed
+      systemProgramManagementService.start();
+      capabilityManagementService.start();
     });
     LOG.info("Started {}", getClass().getSimpleName());
   }
@@ -106,6 +117,8 @@ public class BootstrapService extends AbstractIdleService {
     // There is only a single daemon thread, so no need to wait for termination
     executorService.shutdownNow();
     this.systemAppManagementService.stopAndWait();
+    capabilityManagementService.stopAndWait();
+    systemProgramManagementService.stopAndWait();
     LOG.info("Stopped {}", getClass().getSimpleName());
   }
 

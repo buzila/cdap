@@ -47,17 +47,19 @@ export default class PipelineRuntimeArgsDropdownBtn extends Component {
     this.dropdownButtonRef = React.createRef();
   }
 
-  toggleRunConfigOption = () => {
+  toggleRunConfigOption = (open) => {
     this.setState(
       {
-        showRunOptions: !this.state.showRunOptions,
+        showRunOptions: open,
       },
       () => {
         // FIXME: This is to when the user opens/closes the runtime args modeless.
         // This is to restore it to whatever is the state is in the backend.
         // This will ensure if the user clicks on the "Run" button directly
         // UI will still operate correctly discarding recently entered inputs in the session.
-        fetchAndUpdateRuntimeArgs();
+        if (!this.state.showRunOptions) {
+          fetchAndUpdateRuntimeArgs();
+        }
         if (this.props.onToggle) {
           this.props.onToggle(this.state.showRunOptions);
         }
@@ -85,7 +87,7 @@ export default class PipelineRuntimeArgsDropdownBtn extends Component {
               ref={this.dropdownButtonRef}
               onClick={() => {
                 if (!this.props.disabled) {
-                  this.toggleRunConfigOption();
+                  this.toggleRunConfigOption(true);
                 }
               }}
             >

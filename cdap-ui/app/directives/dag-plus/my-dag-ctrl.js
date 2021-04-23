@@ -57,13 +57,15 @@ angular.module(PKG.name + '.commons')
       left: 0
     };
 
-    vm.comments = [];
     vm.nodeMenuOpen = null;
 
     vm.selectedNode = [];
 
-    var commentsTimeout,
-        nodesTimeout,
+    vm.activePluginToComment = null;
+
+    vm.doesStagesHaveComments = false;
+
+    var nodesTimeout,
         fitToScreenTimeout,
         initTimeout,
         metricsPopoverTimeout,
@@ -71,6 +73,16 @@ angular.module(PKG.name + '.commons')
         highlightSelectedNodeConnectionsTimeout;
 
     var Mousetrap = window.CaskCommon.Mousetrap;
+
+    vm.checkIfAnyStageHasComment = () => {
+      const existingStages = DAGPlusPlusNodesStore.getNodes();
+      return !_.isEmpty(
+        existingStages.find(
+          (node) =>
+            Array.isArray(myHelpers.objectQuery(node, 'information', 'comments', 'list')) && node.information.comments.list.length > 0
+        )
+      );
+    };
 
     vm.clearSelectedNodes = () => {
       vm.selectedNode = [];
@@ -254,7 +266,7 @@ angular.module(PKG.name + '.commons')
         if (!Array.isArray(connectedNodes)) {
           return;
         }
-        const connectionsFromSource = vm.instance.getConnections({sourceId: id});
+        const connectionsFromSource = vm.instance.getAllConnections();
         connectedNodes.forEach(nodeId => {
           if (!selectedNodesMap[nodeId]) {
             return;
@@ -278,7 +290,7 @@ angular.module(PKG.name + '.commons')
       vm.selectedNode = newNodes;
       newNodes = [...$scope.nodes, ...newNodes];
       newConnections  = [...$scope.connections, ...newConnections];
-      DAGPlusPlusNodesActionsFactory.createGraphFromConfigOnPaste(newNodes, newConnections, vm.comments);
+      DAGPlusPlusNodesActionsFactory.createGraphFromConfigOnPaste(newNodes, newConnections);
       vm.instance.unbind('connection');
       vm.instance.unbind('connectionDetached');
       vm.instance.unbind('connectionMoved');
@@ -313,6 +325,7 @@ angular.module(PKG.name + '.commons')
               properties: angular.copy(node.plugin.properties),
               label: node.plugin.label,
             },
+            comments: node.comments,
           };
         })
       };
@@ -333,7 +346,6 @@ angular.module(PKG.name + '.commons')
       $scope.connections = DAGPlusPlusNodesStore.getConnections();
       vm.undoStates = DAGPlusPlusNodesStore.getUndoStates();
       vm.redoStates = DAGPlusPlusNodesStore.getRedoStates();
-      vm.comments = DAGPlusPlusNodesStore.getComments();
 
       initTimeout = $timeout(function () {
         initNodes();
@@ -395,6 +407,7 @@ angular.module(PKG.name + '.commons')
             });
           }, true);
         }
+        vm.doesStagesHaveComments = vm.checkIfAnyStageHasComment();
       });
 
       // This is here because the left panel is initially in the minimized mode and expands
@@ -741,14 +754,30 @@ angular.module(PKG.name + '.commons')
     }
 
     const addConnectionToErrorsAlerts = (conn, sourceNode, targetNode) => {
+      const sanitize =  window.CaskCommon.CDAPHelpers.santizeStringForHTMLID;
       let connObj = {
-        target: conn.to
+        target: sanitize(conn.to),
       };
+      let errorSourceId = `endpoint_${sourceNode.id}_error`;
+      let alertSourceId = `endpoint_${sourceNode.id}_alert`;
 
+      let connectionExist = false;
+      if (targetNode.type === 'errortransform') {
+        connectionExist = vm.instance.getConnections('errorScope')
+          .map(connection => `${connection.sourceId}-##-${connection.targetId}`)
+          .find(connStr => connStr === `${errorSourceId}-##-${sanitize(conn.to)}`);
+      } else if (targetNode.type === 'alertpublisher') {
+        connectionExist = vm.instance.getConnections('alertScope')
+          .map(connection => `${connection.sourceId}-##-${connection.targetId}`)
+          .find(connStr => connStr === `${alertSourceId}-##-${sanitize(conn.to)}`);
+      }
+      if (connectionExist) {
+        return;
+      }
       if (targetNode.type === 'errortransform' && vm.shouldShowErrorsPort(sourceNode)) {
-        connObj.source = vm.instance.getEndpoints(`endpoint_${sourceNode.id}_error`)[0];
+        connObj.source = vm.instance.getEndpoints(errorSourceId)[0];
       } else if (targetNode.type === 'alertpublisher' && vm.shouldShowAlertsPort(sourceNode)) {
-        connObj.source = vm.instance.getEndpoints(`endpoint_${sourceNode.id}_alert`)[0];
+        connObj.source = vm.instance.getEndpoints(alertSourceId)[0];
       } else {
         connObj.source = vm.instance.getEndpoints(`endpoint_${sourceNode.id}`)[0];
         // this is for backwards compability with old pipelines where we don't specify
@@ -775,7 +804,6 @@ angular.module(PKG.name + '.commons')
         angular.forEach($scope.connections, (conn) => {
           var sourceNode = $scope.nodes.find(node => node.name === conn.from);
           var targetNode = $scope.nodes.find(node => node.name === conn.to);
-
           if (!sourceNode || !targetNode) {
             return;
           }
@@ -807,16 +835,25 @@ angular.module(PKG.name + '.commons')
       };
     };
 
-    vm.handleCanvasClick = () => {
+    vm.handleCanvasClick = (e) => {
       if(vm.selectionBox.isSelectionInProgress) {
         vm.selectionBox.isSelectionInProgress = false;
         return;
+      }
+      if (e) {
+        const target = e.target;
+        const isTargetDAGContainer = target.getAttribute('id') === 'dag-container';
+        if (!isTargetDAGContainer) {
+          return;
+        }
+      }
+      if (vm.activePluginToComment) {
+        vm.activePluginToComment = null;
       }
       vm.instance.clearDragSelection();
       vm.toggleNodeMenu();
       clearConnectionsSelection();
       vm.clearSelectedNodes();
-      vm.clearCommentSelection();
     };
 
     function addConnection(newConnObj) {
@@ -1151,15 +1188,6 @@ angular.module(PKG.name + '.commons')
         addConnections();
         selectedConnections = [];
         bindJsPlumbEvents();
-
-        if (commentsTimeout) {
-          vm.comments = DAGPlusPlusNodesStore.getComments();
-          $timeout.cancel(commentsTimeout);
-        }
-
-        commentsTimeout = $timeout(function () {
-          makeCommentsDraggable();
-        });
       });
     }
 
@@ -1186,6 +1214,7 @@ angular.module(PKG.name + '.commons')
           if (!isNodeAlreadySelected) {
             vm.instance.clearDragSelection();
           }
+          vm.resetActivePluginForComment();
         },
         stop: function (dragEndEvent) {
           var config = {
@@ -1195,26 +1224,6 @@ angular.module(PKG.name + '.commons')
             }
           };
           DAGPlusPlusNodesActionsFactory.updateNode(dragEndEvent.el.id, config);
-        }
-      });
-    }
-
-    function makeCommentsDraggable() {
-      var comments = document.querySelectorAll('.comment-box');
-      vm.instance.draggable(comments, {
-        start: function () {
-          vm.clearSelectedNodes();
-          clearConnectionsSelection();
-          dragged = true;
-        },
-        stop: function (dragEndEvent) {
-          var config = {
-            _uiPosition: {
-              top: dragEndEvent.el.style.top,
-              left: dragEndEvent.el.style.left
-            }
-          };
-          DAGPlusPlusNodesActionsFactory.updateComment(dragEndEvent.el.id, config);
         }
       });
     }
@@ -1268,6 +1277,9 @@ angular.module(PKG.name + '.commons')
       vm.secondInstance = jsPlumb.getInstance();
       if (!vm.disableNodeClick) {
         vm.secondInstance.draggable('diagram-container', {
+          start: function() {
+            vm.resetActivePluginForComment();
+          },
           stop: function (e) {
             e.el.style.left = '0px';
             e.el.style.top = '0px';
@@ -1290,7 +1302,6 @@ angular.module(PKG.name + '.commons')
           nodesTimeout = $timeout(function () {
             makeNodesDraggable();
             initNodes();
-            makeCommentsDraggable();
             /**
              * TODO(https://issues.cask.co/browse/CDAP-16423): Need to debug why setting zoom on init doesn't set the correct zoom
              *
@@ -1329,6 +1340,7 @@ angular.module(PKG.name + '.commons')
     };
 
     vm.onNodeClick = function(event, node) {
+      vm.resetActivePluginForComment();
       closeMetricsPopover(node);
 
       window.CaskCommon.PipelineMetricsActionCreator.setMetricsTabActive(false);
@@ -1536,51 +1548,6 @@ angular.module(PKG.name + '.commons')
       repaintEverything();
     };
 
-    vm.addComment = function () {
-      var canvasPanning = DAGPlusPlusNodesStore.getCanvasPanning();
-
-      var config = {
-        content: '',
-        isActive: false,
-        id: 'comment-' + uuid.v4(),
-        _uiPosition: {
-          'top': 250 - canvasPanning.top + 'px',
-          'left': (10/100 * document.documentElement.clientWidth) - canvasPanning.left + 'px'
-        }
-      };
-
-      DAGPlusPlusNodesActionsFactory.addComment(config);
-      if (commentsTimeout) {
-        vm.comments = DAGPlusPlusNodesStore.getComments();
-        $timeout.cancel(commentsTimeout);
-      }
-      commentsTimeout = $timeout(function () {
-        makeCommentsDraggable();
-      });
-    };
-
-    vm.clearCommentSelection = function clearCommentSelection() {
-      angular.forEach(vm.comments, function (comment) {
-        comment.isActive = false;
-      });
-    };
-
-    vm.commentSelect = function (event, comment) {
-      event.stopPropagation();
-      vm.clearCommentSelection();
-
-      if (dragged) {
-        dragged = false;
-        return;
-      }
-
-      comment.isActive = true;
-    };
-
-    vm.deleteComment = function (comment) {
-      DAGPlusPlusNodesActionsFactory.deleteComment(comment);
-    };
-
     vm.undoActions = function () {
       if (!vm.isDisabled && vm.undoStates.length > 0) {
         DAGPlusPlusNodesActionsFactory.undoActions();
@@ -1606,6 +1573,9 @@ angular.module(PKG.name + '.commons')
     };
 
     vm.onKeyboardCopy = function onKeyboardCopy() {
+      if (vm.activePluginToComment) {
+        return;
+      }
       const pluginConfig = vm.getPluginConfiguration();
       if (!pluginConfig) {
         return;
@@ -1648,6 +1618,7 @@ angular.module(PKG.name + '.commons')
     };
 
     function sanitizeNodesAndConnectionsBeforePaste(text) {
+      const sanitize =  window.CaskCommon.CDAPHelpers.santizeStringForHTMLID;
       try {
         let config = {};
         if (typeof text === 'string') {
@@ -1666,7 +1637,7 @@ angular.module(PKG.name + '.commons')
           if (!node) { return; }
 
           // change name
-          let newName = `${node.plugin.label.replace(/[ \/]/g, '-')}`;
+          let newName = `${sanitize(node.plugin.label)}`;
           const randIndex = Math.floor(Math.random() * 100);
           newName = `${newName}${randIndex}`;
           let iconConfiguration = {};
@@ -1738,7 +1709,16 @@ angular.module(PKG.name + '.commons')
       vm.pluginsMap = AvailablePluginsStore.getState().plugins.pluginsMap;
       $scope.nodes.forEach(node => {
         let key = generatePluginMapKey(node);
-        node.isPluginAvailable = Boolean(myHelpers.objectQuery(vm.pluginsMap, key, 'pluginInfo')) ;
+        // This is to check if the plugin version is a range. If so, mark the plugin
+        // as available and UI will decide on the specific version while opening the plugin.
+        if (
+            myHelpers.objectQuery(node, 'plugin', 'artifact', 'version') &&
+            node.plugin.artifact.version.indexOf('[') === 0
+          ) {
+          node.isPluginAvailable = true;
+        } else {
+          node.isPluginAvailable = Boolean(myHelpers.objectQuery(vm.pluginsMap, key, 'pluginInfo')) ;
+        }
       });
       if (!_.isEmpty(vm.pluginsMap)) {
         addErrorAlertsEndpointsAndConnections();
@@ -1760,7 +1740,6 @@ angular.module(PKG.name + '.commons')
         $timeout.cancel(repaintTimeoutsMap[id]);
       });
 
-      $timeout.cancel(commentsTimeout);
       $timeout.cancel(nodesTimeout);
       $timeout.cancel(fitToScreenTimeout);
       $timeout.cancel(initTimeout);
@@ -1774,5 +1753,55 @@ angular.module(PKG.name + '.commons')
       document.body.onpaste = null;
     }
 
+    vm.setComments = (nodeId, comments) => {
+      const existingStages = DAGPlusPlusNodesStore.getNodes();
+      DAGPlusPlusNodesStore.setNodes(existingStages.map((stage) => {
+        if (stage.id === nodeId){
+          let updatedInfo = stage.information || {};
+          updatedInfo = Object.assign({}, updatedInfo, {
+            comments: {
+              list: comments
+            }
+          });
+          stage = Object.assign({}, stage, { information: updatedInfo });
+        }
+        return stage;
+      }));
+      vm.doesStagesHaveComments = vm.checkIfAnyStageHasComment();
+    };
+
+    vm.setPluginActiveForComment = (nodeId) => {
+      vm.resetActivePluginForComment(nodeId);
+      if (!nodeId) {
+        vm.handleCanvasClick();
+      } else {
+        vm.onPluginContextMenuOpen(nodeId);
+      }
+      vm.nodeMenuOpen = null;
+    };
+
+    vm.resetActivePluginForComment = (nodeId = null) => {
+      vm.activePluginToComment = nodeId;
+    };
+
+    vm.initPipelineComments = () => {
+      let comments;
+      if (vm.isDisabled) {
+        comments = window.CaskCommon.PipelineDetailStore.getState().config.comments;
+      } else {
+        comments = HydratorPlusPlusConfigStore.getComments();
+      }
+      vm.pipelineComments = comments;
+    };
+
+    vm.setPipelineComments = (comments) => {
+      if (vm.isDisabled) {
+        return;
+      }
+      HydratorPlusPlusConfigStore.setComments(comments);
+      vm.pipelineComments = comments;
+    };
+
     $scope.$on('$destroy', cleanupOnDestroy);
+    vm.initPipelineComments();
   });

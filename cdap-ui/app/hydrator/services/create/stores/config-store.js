@@ -83,13 +83,14 @@ class HydratorPlusPlusConfigStore {
         nodes: [],
       },
       description: '',
-      name: ''
+      name: '',
     };
     Object.assign(this.state, { config: this.getDefaultConfig() });
 
     // This will be eventually used when we just pass on a config to the store to draw the dag.
     if (config) {
       angular.extend(this.state, config);
+      this.setComments(this.state.config.comments);
       this.setArtifact(this.state.artifact);
       this.setProperties(this.state.config.properties);
       this.setDriverResources(this.state.config.driverResources);
@@ -171,6 +172,7 @@ class HydratorPlusPlusConfigStore {
     };
 
     let addPluginToConfig = (node, id) => {
+      const sanitize =  window.CaskCommon.CDAPHelpers.santizeStringForHTMLID;
       if (node.outputSchemaProperty) {
         try {
           let outputSchema = JSON.parse(node.outputSchema);
@@ -194,13 +196,14 @@ class HydratorPlusPlusConfigStore {
           label: node.plugin.label,
           artifact: node.plugin.artifact,
           properties: node.plugin.properties ,
-          _backendProperties: node._backendProperties
+          _backendProperties: node._backendProperties,
         },
+        information: node.information,
         outputSchema: node.outputSchema,
         inputSchema: node.inputSchema
       };
 
-      configObj.id = configObj.name.replace(/[ \/]/g, '-');
+      configObj.id = sanitize(configObj.name);
       if (node.errorDatasetName) {
         configObj.errorDatasetName = node.errorDatasetName;
       }
@@ -292,12 +295,11 @@ class HydratorPlusPlusConfigStore {
       };
     }
 
+    config.comments = this.getComments();
+
     if (this.state.description) {
       config.description = this.state.description;
     }
-
-    config.comments = this.getComments();
-
     // Removing UUID from postactions name
     let postActions = this.getPostActions();
     postActions = _.sortBy(postActions, (action) => {
@@ -322,12 +324,21 @@ class HydratorPlusPlusConfigStore {
 
     return config;
   }
-  getConfigForExport() {
+  getConfigForExport(configOptions = {}) {
     var state = this.getState();
     // Stripping of uuids and generating configs is what is going on here.
-
     var config = angular.copy(this.generateConfigFromState());
-    this.HydratorPlusPlusCanvasFactory.pruneProperties(config);
+    if (typeof configOptions.shouldPruneProperties === 'undefined') {
+      configOptions.shouldPruneProperties = true;
+    }
+    if (configOptions.shouldPruneProperties) {
+      /**
+       * If the pipeline is saved as draft we don't want to prune properties
+       * The empty properties are needed to understand the defaults the user wants
+       * to override when publishing the pipeline.
+       */
+      this.HydratorPlusPlusCanvasFactory.pruneProperties(config);
+    }
     state.config = angular.copy(config);
 
     var nodes = angular.copy(this.getNodes()).map( node => {
@@ -361,12 +372,6 @@ class HydratorPlusPlusConfigStore {
       }
     });
     delete stateCopy.__ui__;
-
-    angular.forEach(stateCopy.config.comments, (comment) => {
-      delete comment.isActive;
-      delete comment.id;
-      delete comment._uiPosition;
-    });
 
     return stateCopy;
   }
@@ -774,7 +779,13 @@ class HydratorPlusPlusConfigStore {
     this.state.config.schedule = schedule;
   }
 
-  validateState(isShowConsoleMessage) {
+  validateState(validationConfig) {
+    if (!validationConfig) {
+      validationConfig = {
+        showConsoleMessage: false,
+        validateBeforePreview: false
+      };
+    }
     let isStateValid = true;
     let name = this.getName();
     let errorFactory = this.NonStorePipelineErrorFactory;
@@ -798,7 +809,7 @@ class HydratorPlusPlusConfigStore {
       } else {
         node.warning = true;
       }
-      if (isShowConsoleMessage) {
+      if (validationConfig.showConsoleMessage) {
         node.error = true;
         delete node.warning;
       }
@@ -830,14 +841,16 @@ class HydratorPlusPlusConfigStore {
       });
     }
 
-    errorFactory.hasValidName(name, (err) => {
-      if (err) {
-        isStateValid = false;
-        errors.push({
-          type: err
-        });
-      }
-    });
+    if (!validationConfig.validateBeforePreview) {
+      errorFactory.hasValidName(name, (err) => {
+        if (err) {
+          isStateValid = false;
+          errors.push({
+            type: err
+          });
+        }
+      });
+    }
     errorFactory.hasNoBackendProperties(nodes, errorNodes => {
       if (errorNodes) {
         isStateValid = false;
@@ -927,7 +940,7 @@ class HydratorPlusPlusConfigStore {
       });
     }
 
-    if (errors.length && isShowConsoleMessage) {
+    if (errors.length && validationConfig.showConsoleMessage) {
       this.HydratorPlusPlusConsoleActions.addMessage(errors);
     }
     return isStateValid;
@@ -1059,7 +1072,7 @@ class HydratorPlusPlusConfigStore {
       return;
     }
 
-    let config = this.getConfigForExport();
+    let config = this.getConfigForExport({ shouldPruneProperties: false });
     const draftId = this.getDraftId() || this.uuid.v4();
     const params = {
       context: this.$stateParams.namespace,
@@ -1109,7 +1122,9 @@ class HydratorPlusPlusConfigStore {
 
   publishPipeline() {
     this.HydratorPlusPlusConsoleActions.resetMessages();
-    let error = this.validateState(true);
+    let error = this.validateState({
+      showConsoleMessage: true
+    });
 
     if (!error) { return; }
     this.EventPipe.emit('showLoadingIcon', 'Deploying Pipeline...');
@@ -1140,6 +1155,7 @@ class HydratorPlusPlusConfigStore {
               delete res[this.$stateParams.namespace][draftId];
               return this.mySettings.set('hydratorDrafts', res);
             }
+            return Promise.resolve(true);
           },
           draftDeleteErrorHandler.bind(this)
         ).then(navigateToDetailedView.bind(this, adapterName));
@@ -1148,7 +1164,7 @@ class HydratorPlusPlusConfigStore {
     let removeFromUserDrafts = (adapterName) => {
       const draftId = this.getDraftId();
       if (!draftId) {
-        return;
+        return navigateToDetailedView.call(this, adapterName);
       }
       /**
        * Remove the draft from the new API. If it errors out check if it is

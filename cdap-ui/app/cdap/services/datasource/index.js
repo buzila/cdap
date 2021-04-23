@@ -95,6 +95,7 @@ export default class Datasource {
           // be considered delayed because the timestamp is from last
           // request-poll which does not matter anymore.
           this.bindings[hash].resource.requestTime = null;
+          clearTimeout(this.bindings[hash].resource.interval);
           this.bindings[hash].resource.interval = this.startClientPoll(hash);
         }
       }
@@ -180,6 +181,8 @@ export default class Datasource {
 
     if (resource.requestOrigin) {
       generatedResource.requestOrigin = resource.requestOrigin;
+    } else {
+      generatedResource.requestOrigin = REQUEST_ORIGIN_ROUTER;
     }
 
     let subject = new Subject();
@@ -238,6 +241,8 @@ export default class Datasource {
 
     if (resource.requestOrigin) {
       generatedResource.requestOrigin = resource.requestOrigin;
+    } else {
+      generatedResource.requestOrigin = REQUEST_ORIGIN_ROUTER;
     }
     let subject = new Subject();
 

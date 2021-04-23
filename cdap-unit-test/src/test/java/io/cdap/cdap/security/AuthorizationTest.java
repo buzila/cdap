@@ -91,7 +91,6 @@ import io.cdap.cdap.test.app.DatasetCrossNSAccessWithMAPApp;
 import io.cdap.cdap.test.app.DummyApp;
 import io.cdap.cdap.test.artifacts.plugins.ToStringPlugin;
 import io.cdap.common.http.HttpRequest;
-import io.cdap.common.http.HttpRequests;
 import io.cdap.common.http.HttpResponse;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.twill.filesystem.LocalLocationFactory;
@@ -532,9 +531,10 @@ public class AuthorizationTest extends TestBase {
   public void testCrossNSService() throws Exception {
     createAuthNamespace();
     ApplicationId appId = AUTH_NAMESPACE.app(CrossNsDatasetAccessApp.APP_NAME);
+    ArtifactId artifact = AUTH_NAMESPACE.artifact(CrossNsDatasetAccessApp.class.getSimpleName(), "1.0-SNAPSHOT");
     Map<EntityId, Set<Action>> neededPrivileges = ImmutableMap.<EntityId, Set<Action>>builder()
       .put(appId, EnumSet.of(Action.ADMIN))
-      .put(AUTH_NAMESPACE.artifact(CrossNsDatasetAccessApp.class.getSimpleName(), "1.0-SNAPSHOT"),
+      .put(artifact,
            EnumSet.of(Action.ADMIN))
       .build();
 
@@ -544,6 +544,8 @@ public class AuthorizationTest extends TestBase {
     cleanUpEntities.add(programId);
     // grant bob execute on program and READ/WRITE on stream
     grantAndAssertSuccess(programId, BOB, EnumSet.of(Action.EXECUTE));
+    //new privilege required due to capability validations
+    grantAndAssertSuccess(artifact, BOB, EnumSet.of(Action.READ));
 
     ApplicationManager appManager = deployApplication(AUTH_NAMESPACE, CrossNsDatasetAccessApp.class);
 
@@ -618,7 +620,9 @@ public class AuthorizationTest extends TestBase {
     URL url = new URL(serviceManager.getServiceURL(5, TimeUnit.SECONDS), "write/data");
     HttpResponse response = executeHttp(HttpRequest.put(url).build());
     Assert.assertEquals(500, response.getResponseCode());
-    Assert.assertTrue(response.getResponseBodyAsString().contains("'" + BOB + "' is not authorized"));
+    // This is a hack that works around the fact that we cannot properly catch exceptions in the service handler.
+    // TODO: Figure out a way to stop checking error messages.
+    Assert.assertTrue(response.getResponseBodyAsString().contains("'" + BOB + "' has insufficient privileges"));
 
     serviceManager.stop();
     serviceManager.waitForStopped(10, TimeUnit.SECONDS);
@@ -662,9 +666,10 @@ public class AuthorizationTest extends TestBase {
     createAuthNamespace();
     ApplicationId appId = AUTH_NAMESPACE.app(DatasetCrossNSAccessWithMAPApp.class.getSimpleName());
 
+    ArtifactId artifact = AUTH_NAMESPACE.artifact(DatasetCrossNSAccessWithMAPApp.class.getSimpleName(), "1.0-SNAPSHOT");
     Map<EntityId, Set<Action>> neededPrivileges = ImmutableMap.<EntityId, Set<Action>>builder()
       .put(appId, EnumSet.of(Action.ADMIN))
-      .put(AUTH_NAMESPACE.artifact(DatasetCrossNSAccessWithMAPApp.class.getSimpleName(), "1.0-SNAPSHOT"),
+      .put(artifact,
            EnumSet.of(Action.ADMIN))
       .build();
     setUpPrivilegeAndRegisterForDeletion(ALICE, neededPrivileges);
@@ -672,6 +677,8 @@ public class AuthorizationTest extends TestBase {
     ProgramId programId = appId.program(ProgramType.MAPREDUCE, DatasetCrossNSAccessWithMAPApp.MAPREDUCE_PROGRAM);
     // bob will be executing the program
     grantAndAssertSuccess(programId, BOB, EnumSet.of(Action.EXECUTE));
+    //new privilege required due to capability validations
+    grantAndAssertSuccess(artifact, BOB, EnumSet.of(Action.READ));
     cleanUpEntities.add(programId);
 
     ApplicationManager appManager = deployApplication(AUTH_NAMESPACE, DatasetCrossNSAccessWithMAPApp.class);
@@ -815,9 +822,10 @@ public class AuthorizationTest extends TestBase {
     createAuthNamespace();
     ApplicationId appId = AUTH_NAMESPACE.app(TestSparkCrossNSDatasetApp.APP_NAME);
 
+    ArtifactId artifact = AUTH_NAMESPACE.artifact(TestSparkCrossNSDatasetApp.class.getSimpleName(), "1.0-SNAPSHOT");
     Map<EntityId, Set<Action>> neededPrivileges = ImmutableMap.<EntityId, Set<Action>>builder()
       .put(appId, EnumSet.of(Action.ADMIN))
-      .put(AUTH_NAMESPACE.artifact(TestSparkCrossNSDatasetApp.class.getSimpleName(), "1.0-SNAPSHOT"),
+      .put(artifact,
            EnumSet.of(Action.ADMIN))
       .put(AUTH_NAMESPACE.dataset(TestSparkCrossNSDatasetApp.DEFAULT_OUTPUT_DATASET), EnumSet.of(Action.ADMIN))
       .put(AUTH_NAMESPACE.datasetType(KeyValueTable.class.getName()), EnumSet.of(Action.ADMIN))
@@ -827,6 +835,8 @@ public class AuthorizationTest extends TestBase {
     ProgramId programId = appId.spark(TestSparkCrossNSDatasetApp.SPARK_PROGRAM_NAME);
     // bob will be executing the program
     grantAndAssertSuccess(programId, BOB, EnumSet.of(Action.EXECUTE));
+    //new privilege required due to capability validations
+    grantAndAssertSuccess(artifact, BOB, EnumSet.of(Action.READ));
     cleanUpEntities.add(programId);
 
     ApplicationManager appManager = deployApplication(AUTH_NAMESPACE, TestSparkCrossNSDatasetApp.class);
@@ -1103,9 +1113,10 @@ public class AuthorizationTest extends TestBase {
     ApplicationId appId = AUTH_NAMESPACE.app(PartitionTestApp.class.getSimpleName());
     DatasetId datasetId = AUTH_NAMESPACE.dataset(PartitionTestApp.PFS_NAME);
 
+    ArtifactId artifact = AUTH_NAMESPACE.artifact(PartitionTestApp.class.getSimpleName(), "1.0-SNAPSHOT");
     Map<EntityId, Set<Action>> neededPrivileges = ImmutableMap.<EntityId, Set<Action>>builder()
       .put(appId, EnumSet.of(Action.ADMIN))
-      .put(AUTH_NAMESPACE.artifact(PartitionTestApp.class.getSimpleName(), "1.0-SNAPSHOT"), EnumSet.of(Action.ADMIN))
+      .put(artifact, EnumSet.of(Action.ADMIN))
       .put(datasetId, EnumSet.of(Action.ADMIN))
       .put(AUTH_NAMESPACE.datasetType(PartitionedFileSet.class.getName()), EnumSet.of(Action.ADMIN))
       .build();
@@ -1116,6 +1127,8 @@ public class AuthorizationTest extends TestBase {
     cleanUpEntities.add(programId);
     grantAndAssertSuccess(datasetId, BOB, EnumSet.of(Action.READ));
     cleanUpEntities.add(datasetId);
+    //new privilege required due to capability validations
+    grantAndAssertSuccess(artifact, BOB, EnumSet.of(Action.READ));
 
     ApplicationManager appMgr = deployApplication(AUTH_NAMESPACE, PartitionTestApp.class);
     SecurityRequestContext.setUserId(BOB.getName());

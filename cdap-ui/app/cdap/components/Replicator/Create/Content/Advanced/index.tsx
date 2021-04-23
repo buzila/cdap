@@ -54,33 +54,6 @@ const styles = (): StyleRules => {
   };
 };
 
-const OffsetBasePathEditor = ({ onChange, value }) => {
-  const widget = {
-    label: 'Path',
-    name: 'offset',
-    'widget-type': 'textbox',
-    'widget-attributes': {
-      placeholder: 'Path for checkpoint storage location',
-    },
-  };
-
-  const property = {
-    required: false,
-    name: 'offset',
-    description:
-      'This is the directory where checkpoints for the replication pipeline are stored, so the pipeline can resume from a previous checkpoint, instead of starting from the beginning if it is restarted.',
-  };
-
-  return (
-    <WidgetWrapper
-      widgetProperty={widget}
-      pluginProperty={property}
-      value={value}
-      onChange={onChange}
-    />
-  );
-};
-
 const NumInstancesEditor = ({ onChange, value }) => {
   const widget = {
     label: 'Number of tasks',
@@ -95,7 +68,7 @@ const NumInstancesEditor = ({ onChange, value }) => {
     required: true,
     name: 'numInstance',
     description:
-      'The tables in a replication pipeline are evenly distributed amongst all the tasks. Set this to a higher number to distribute the load amongst a larger number of tasks, thereby increasing the parallelism of the replication pipeline. This value cannot be changed after the pipeline is created.',
+      'The tables in a replication job are evenly distributed amongst all the tasks. Set this to a higher number to distribute the load amongst a larger number of tasks, thereby increasing the parallelism of the replication job. This value cannot be changed after the job is created.',
   };
 
   function handleChange(val) {
@@ -165,12 +138,10 @@ const TASK_OPTIONS = {
 
 const AdvancedView: React.FC<ICreateContext & WithStyles<typeof styles>> = ({
   classes,
-  offsetBasePath,
   numInstances,
   setAdvanced,
 }) => {
-  const [localOffset, setLocalOffset] = React.useState(offsetBasePath);
-  const [localNumInstances, setLocalNumInstances] = React.useState(numInstances);
+  const [localNumInstances, setLocalNumInstances] = React.useState(numInstances || 1);
   const [taskSelection, setTaskSelection] = React.useState(TASK_OPTIONS.calculate);
   const [dataAmount, setDataAmount] = React.useState(1);
 
@@ -180,7 +151,8 @@ const AdvancedView: React.FC<ICreateContext & WithStyles<typeof styles>> = ({
   }, []);
 
   function getInitialTaskSelection() {
-    const initialDataAmount = options.find((opt) => opt.value === numInstances);
+    const initialNumInstances = numInstances || 1;
+    const initialDataAmount = options.find((opt) => opt.value === initialNumInstances);
     if (initialDataAmount) {
       setDataAmount(initialDataAmount.value);
       return TASK_OPTIONS.calculate;
@@ -195,7 +167,7 @@ const AdvancedView: React.FC<ICreateContext & WithStyles<typeof styles>> = ({
       selectedNumInstance = dataAmount;
     }
 
-    setAdvanced(localOffset, selectedNumInstance);
+    setAdvanced(selectedNumInstance);
   }
 
   function handleSelectTask(e) {
@@ -241,10 +213,6 @@ const AdvancedView: React.FC<ICreateContext & WithStyles<typeof styles>> = ({
           </div>
         </If>
       </div>
-
-      <Heading type={HeadingTypes.h4} label="Checkpoint" />
-      <br />
-      <OffsetBasePathEditor value={localOffset} onChange={setLocalOffset} />
 
       <StepButtons onNext={handleNext} />
     </div>

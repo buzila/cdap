@@ -52,6 +52,7 @@ interface ISchemaValidatorContext {
 }
 interface ISchemaValidatorProviderProps {
   errors?: Record<string, string>;
+  reset?: boolean;
 }
 
 const SchemaValidatorContext = React.createContext<ISchemaValidatorContext>({
@@ -66,8 +67,13 @@ class SchemaValidatorProvider extends React.Component<ISchemaValidatorProviderPr
   };
 
   public componentWillReceiveProps(nextProps) {
-    const { errors } = nextProps;
-    if (!isEqual(errors, this.props.errors)) {
+    const { errors, reset } = nextProps;
+    if (reset) {
+      return this.setState({
+        errorMap: {},
+      });
+    }
+    if (!isEqual(errors, this.props.errors) || reset !== this.props.reset) {
       this.setState({
         errorMap: {
           ...this.state.errorMap,

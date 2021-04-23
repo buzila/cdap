@@ -1,5 +1,5 @@
 /*
- * Copyright © 2014-2020 Cask Data, Inc.
+ * Copyright © 2014-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -122,6 +122,7 @@ public final class Constants {
     public static final String EXPLORE_HTTP_USER_SERVICE = "explore.service";
     public static final String MESSAGING_SERVICE = "messaging.service";
     public static final String RUNTIME = "runtime";
+    public static final String AUTHENTICATION = "authentication";
 
     public static final String SERVICE_INSTANCE_TABLE_NAME = "cdap.services.instances";
     /** Scheduler queue name to submit the master service app. */
@@ -783,6 +784,8 @@ public final class Constants {
       public static final String PROGRAM_PROVISIONING_DELAY_SECONDS = "program.provisioning.delay.seconds";
       public static final String RUN_TIME_SECONDS = "program.run.seconds";
       public static final String APPLICATION_COUNT = "application.count";
+      public static final String NAMESPACE_COUNT = "namespace.count";
+      public static final String APPLICATION_PLUGIN_COUNT = "application.plugin.count";
     }
 
     /**
@@ -1050,6 +1053,21 @@ public final class Constants {
       public static final String INTERNAL_CERT_PATH = "ssl.internal.cert.path";
       /** Password for the SSL certificate. */
       public static final String INTERNAL_CERT_PASSWORD = "ssl.internal.cert.password";
+    }
+
+    /**
+     * Authentication.
+     */
+    public static final class Authentication {
+      /**
+       * Determines which authentication mode to use.
+       * Should be chosen from the {@link io.cdap.cdap.security.auth.AuthenticationMode} enum.
+       */
+      public static final String MODE = "security.authentication.mode";
+      /** The header from which CDAP should expect to receive the end user identity when using proxy auth mode. */
+      public static final String PROXY_USER_ID_HEADER = "security.authentication.proxy.user.identity.header";
+      /** Determines whether to propagate the end user credential as part of the Principal. */
+      public static final String PROPAGATE_USER_CREDENTIAL = "security.authentication.propagate.user.credentials";
     }
 
     /**
@@ -1513,5 +1531,9 @@ public final class Constants {
      * Capability config directory path key
      */
     public static final String CONFIG_DIR = "capability.config.dir";
+    /**
+     * Number of executor threads used to auto install resources when a capability is enabled
+     */
+    public static final String AUTO_INSTALL_THREADS = "capability.autoinstall.threads";
   }
 }

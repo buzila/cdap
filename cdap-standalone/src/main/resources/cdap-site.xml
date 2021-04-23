@@ -71,7 +71,7 @@
     <name>app.program.spark.compat</name>
     <value>spark2_2.11</value>
     <description>
-      Spark compatibility version. Must be 'spark1_2.10' or 'spark2_2.11'. This is only
+      Spark compatibility version. Must be 'spark2_2.11' or 'spark3_2.12'. This is only
       used in CDAP Local Sandbox mode. In Distributed CDAP mode, the Spark version will be
       automatically detected.
     </description>
@@ -297,6 +297,14 @@
     <value>capability-config</value>
     <description>
       Internal directory that maintains the currently disabled and enabled configurations
+    </description>
+  </property>
+
+  <property>
+    <name>capability.autoinstall.threads</name>
+    <value>5</value>
+    <description>
+      Number of threads to be used for auto installing resources when a capability is enabled
     </description>
   </property>
 

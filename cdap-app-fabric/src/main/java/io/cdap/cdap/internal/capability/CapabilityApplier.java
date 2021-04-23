@@ -19,24 +19,37 @@ package io.cdap.cdap.internal.capability;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
+import io.cdap.cdap.api.artifact.ArtifactId;
+import io.cdap.cdap.api.artifact.ArtifactRange;
+import io.cdap.cdap.api.artifact.ArtifactScope;
+import io.cdap.cdap.api.artifact.ArtifactSummary;
+import io.cdap.cdap.api.artifact.ArtifactVersionRange;
 import io.cdap.cdap.api.metadata.MetadataEntity;
 import io.cdap.cdap.api.metadata.MetadataScope;
 import io.cdap.cdap.app.runtime.Arguments;
 import io.cdap.cdap.common.ApplicationNotFoundException;
 import io.cdap.cdap.common.ArtifactNotFoundException;
 import io.cdap.cdap.common.InvalidArtifactException;
+import io.cdap.cdap.common.NotFoundException;
 import io.cdap.cdap.common.conf.CConfiguration;
+import io.cdap.cdap.common.conf.Constants;
 import io.cdap.cdap.common.namespace.NamespaceAdmin;
 import io.cdap.cdap.common.service.Retries;
 import io.cdap.cdap.common.service.RetryStrategies;
+import io.cdap.cdap.gateway.handlers.util.VersionHelper;
 import io.cdap.cdap.internal.app.deploy.ProgramTerminator;
 import io.cdap.cdap.internal.app.runtime.BasicArguments;
+import io.cdap.cdap.internal.app.runtime.artifact.ArtifactDetail;
+import io.cdap.cdap.internal.app.runtime.artifact.ArtifactRepository;
 import io.cdap.cdap.internal.app.services.ApplicationLifecycleService;
 import io.cdap.cdap.internal.app.services.ProgramLifecycleService;
 import io.cdap.cdap.internal.app.services.SystemProgramManagementService;
+import io.cdap.cdap.internal.capability.autoinstall.HubPackage;
 import io.cdap.cdap.internal.entity.EntityResult;
+import io.cdap.cdap.proto.ApplicationDetail;
 import io.cdap.cdap.proto.NamespaceMeta;
 import io.cdap.cdap.proto.ProgramType;
+import io.cdap.cdap.proto.artifact.ArtifactSortOrder;
 import io.cdap.cdap.proto.id.ApplicationId;
 import io.cdap.cdap.proto.id.NamespaceId;
 import io.cdap.cdap.proto.id.ProgramId;
@@ -48,14 +61,25 @@ import org.apache.twill.discovery.DiscoveryServiceClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
@@ -80,18 +104,27 @@ class CapabilityApplier {
   private final NamespaceAdmin namespaceAdmin;
   private final CapabilityStatusStore capabilityStatusStore;
   private final MetadataSearchClient metadataSearchClient;
+  private final ArtifactRepository artifactRepository;
+  private final File tmpDir;
+  private ExecutorService executorService;
+  private final int autoInstallThreads;
 
   @Inject
-  CapabilityApplier(CConfiguration cConf, SystemProgramManagementService systemProgramManagementService,
+  CapabilityApplier(SystemProgramManagementService systemProgramManagementService,
                     ApplicationLifecycleService applicationLifecycleService, NamespaceAdmin namespaceAdmin,
                     ProgramLifecycleService programLifecycleService, CapabilityStatusStore capabilityStatusStore,
-                    DiscoveryServiceClient discoveryClient) {
+                    ArtifactRepository artifactRepository, DiscoveryServiceClient discoveryClient,
+                    CConfiguration cConf) {
     this.systemProgramManagementService = systemProgramManagementService;
     this.applicationLifecycleService = applicationLifecycleService;
     this.programLifecycleService = programLifecycleService;
     this.capabilityStatusStore = capabilityStatusStore;
     this.namespaceAdmin = namespaceAdmin;
     this.metadataSearchClient = new MetadataSearchClient(discoveryClient);
+    this.artifactRepository = artifactRepository;
+    this.tmpDir = new File(cConf.get(Constants.CFG_LOCAL_DATA_DIR),
+                           cConf.get(Constants.AppFabric.TEMP_DIR)).getAbsoluteFile();
+    this.autoInstallThreads = cConf.getInt(Constants.Capability.AUTO_INSTALL_THREADS);
   }
 
   /**
@@ -127,8 +160,8 @@ class CapabilityApplier {
     }
     //add all unfinished operations to retry
     List<CapabilityOperationRecord> currentOperations = currentCapabilityRecords.values().stream()
-      .filter(capabilityRecord -> capabilityRecord.getCapabilityOperationRecord() != null)
       .map(CapabilityRecord::getCapabilityOperationRecord)
+      .filter(Objects::nonNull)
       .collect(Collectors.toList());
     for (CapabilityOperationRecord operationRecord : currentOperations) {
       switch (operationRecord.getActionType()) {
@@ -156,6 +189,14 @@ class CapabilityApplier {
     deleteCapabilities(deleteSet);
   }
 
+  public void doShutdown() {
+    executorService.shutdown();
+  }
+
+  public void doStartup() {
+    executorService = Executors.newFixedThreadPool(autoInstallThreads);
+  }
+
   private void enableCapabilities(Set<CapabilityConfig> enableSet) throws Exception {
     Map<ProgramId, Arguments> enabledPrograms = new HashMap<>();
     Map<String, CapabilityConfig> configs = capabilityStatusStore
@@ -166,14 +207,14 @@ class CapabilityApplier {
         .put(getProgramId(systemProgram), new BasicArguments(systemProgram.getArgs())));
       String capability = capabilityConfig.getCapability();
       CapabilityConfig existingConfig = configs.get(capability);
-      if (capabilityConfig.equals(existingConfig)) {
-        capabilityStatusStore.deleteCapabilityOperation(capability);
-        continue;
+      //Check and log so logs are not flooded
+      if (!capabilityConfig.equals(existingConfig)) {
+        LOG.debug("Enabling capability {}", capability);
       }
       capabilityStatusStore.addOrUpdateCapabilityOperation(capability, CapabilityAction.ENABLE, capabilityConfig);
-      LOG.debug("Enabling capability {}", capability);
       //If already deployed, will be ignored
       deployAllSystemApps(capability, capabilityConfig.getApplications());
+      autoInstallResources(capability, capabilityConfig.getHubs());
     }
     //start all programs
     systemProgramManagementService.setProgramsEnabled(enabledPrograms);
@@ -183,7 +224,6 @@ class CapabilityApplier {
       capabilityStatusStore
         .addOrUpdateCapability(capability, CapabilityStatus.ENABLED, capabilityConfig);
       capabilityStatusStore.deleteCapabilityOperation(capability);
-      LOG.debug("Enabled capability {}", capability);
     }
   }
 
@@ -193,19 +233,17 @@ class CapabilityApplier {
     for (CapabilityConfig capabilityConfig : disableSet) {
       String capability = capabilityConfig.getCapability();
       CapabilityConfig existingConfig = configs.get(capability);
-      if (capabilityConfig.equals(existingConfig)) {
-        capabilityStatusStore.deleteCapabilityOperation(capability);
-        continue;
+      //Check and log so logs are not flooded
+      if (!capabilityConfig.equals(existingConfig)) {
+        LOG.debug("Disabling capability {}", capability);
       }
       capabilityStatusStore.addOrUpdateCapabilityOperation(capability, CapabilityAction.DISABLE, capabilityConfig);
-      LOG.debug("Disabling capability {}", capability);
       capabilityStatusStore
         .addOrUpdateCapability(capabilityConfig.getCapability(), CapabilityStatus.DISABLED, capabilityConfig);
       //stop all the programs having capability metadata. Services will be stopped by SystemProgramManagementService
       doForAllAppsWithCapability(capability,
                                  applicationId -> doWithRetry(applicationId, programLifecycleService::stopAll));
       capabilityStatusStore.deleteCapabilityOperation(capability);
-      LOG.debug("Disabled capability {}", capability);
     }
   }
 
@@ -215,27 +253,32 @@ class CapabilityApplier {
     for (CapabilityConfig capabilityConfig : deleteSet) {
       String capability = capabilityConfig.getCapability();
       CapabilityConfig existingConfig = configs.get(capability);
-      //already deleted
-      if (existingConfig == null) {
-        capabilityStatusStore.deleteCapabilityOperation(capability);
-        continue;
+      if (existingConfig != null) {
+        LOG.debug("Deleting capability {}", capability);
       }
       capabilityStatusStore.addOrUpdateCapabilityOperation(capability, CapabilityAction.DELETE, capabilityConfig);
-      LOG.debug("Deleting capability {}", capability);
       //disable first
       disableCapabilities(deleteSet);
       //remove all applications having capability metadata.
       doForAllAppsWithCapability(capability,
                                  applicationId -> doWithRetry(applicationId,
-                                                              applicationLifecycleService::removeApplication));
+                                                              this::removeApplication));
       //remove deployments of system applications
       for (SystemApplication application : capabilityConfig.getApplications()) {
         ApplicationId applicationId = getApplicationId(application);
-        doWithRetry(applicationId, applicationLifecycleService::removeApplication);
+        doWithRetry(applicationId, this::removeApplication);
       }
       capabilityStatusStore.deleteCapability(capability);
       capabilityStatusStore.deleteCapabilityOperation(capability);
-      LOG.debug("Deleted capability {}", capability);
+    }
+  }
+
+  private void removeApplication(ApplicationId applicationId) throws Exception {
+    try {
+      applicationLifecycleService.removeApplication(applicationId);
+    } catch (NotFoundException ex) {
+      //ignore, could have been removed with REST api or was not deployed
+      LOG.debug("Application is already removed. ", ex);
     }
   }
 
@@ -250,37 +293,114 @@ class CapabilityApplier {
     return new ProgramId(applicationId, ProgramType.valueOf(program.getType().toUpperCase()), program.getName());
   }
 
-  private void deployAllSystemApps(String capability, List<SystemApplication> applications) throws Exception {
+  private void deployAllSystemApps(String capability, List<SystemApplication> applications)  {
     if (applications.isEmpty()) {
       LOG.debug("Capability {} do not have apps associated with it", capability);
       return;
     }
-    for (SystemApplication application : applications) {
-      doWithRetry(application, this::deployApp);
+    try {
+      for (SystemApplication application : applications) {
+        doWithRetry(application, this::deployApp);
+      }
+    } catch (Exception exception) {
+      LOG.error("Deploying application failed", exception);
     }
   }
 
   private void deployApp(SystemApplication application) throws Exception {
     ApplicationId applicationId = getApplicationId(application);
-    LOG.debug("Deploying app {}", applicationId);
-    if (isAppDeployed(applicationId)) {
-      //Already deployed.
-      LOG.debug("Application {} is already deployed", applicationId);
+    if (!shouldDeployApp(applicationId, application)) {
+      //skip logging here to prevent flooding the logs
       return;
     }
+    LOG.debug("Application {} is being deployed", applicationId);
     String configString = application.getConfig() == null ? null : GSON.toJson(application.getConfig());
     applicationLifecycleService
       .deployApp(applicationId.getParent(), applicationId.getApplication(), applicationId.getVersion(),
                  application.getArtifact(), configString, NOOP_PROGRAM_TERMINATOR, null, null);
   }
 
-  private boolean isAppDeployed(ApplicationId applicationId) throws Exception {
-    try {
-      applicationLifecycleService.getAppDetail(applicationId);
-      return true;
-    } catch (ApplicationNotFoundException exception) {
-      return false;
+  @VisibleForTesting
+  void autoInstallResources(String capability, @Nullable List<URL> hubs) {
+    for (URL hub : Optional.ofNullable(hubs).orElse(Collections.emptyList())) {
+      HubPackage[] hubPackages;
+      try {
+        URL url = new URL(hub, "/v2/packages.json");
+        String packagesJson = HttpClients.doGetAsString(url);
+        // Deserialize packages.json from hub
+        // See https://cdap.atlassian.net/wiki/spaces/DOCS/pages/554401840/Hub+API?src=search#Get-Hub-Catalog
+        hubPackages = GSON.fromJson(packagesJson, HubPackage[].class);
+      } catch (Exception e) {
+        LOG.warn("Failed to get packages.json from {} for capability {}. Ignoring error.", hub, capability, e);
+        continue;
+      }
+
+      String currentVersion = getCurrentVersion();
+      // Get the latest compatible version of each plugin from hub and install it
+      List<Future<?>> futures = Arrays.stream(hubPackages)
+        .filter(p -> p.versionIsInRange(currentVersion))
+        .collect(Collectors.groupingBy(HubPackage::getName,
+                                       Collectors.maxBy(Comparator.comparing(HubPackage::getArtifactVersion))))
+        .values()
+        .stream()
+        .filter(Optional::isPresent)
+        .map(Optional::get)
+        .map(p ->
+               executorService.submit(() -> {
+                 try {
+                   LOG.debug("Installing plugins {} for capability {} from hub {}", p.getName(), capability, hub);
+                   p.installPlugin(hub, artifactRepository, tmpDir);
+                 } catch (Exception e) {
+                   LOG.warn("Failed to install plugin {} for capability {} from hub {}. Ignoring error",
+                            p.getName(), capability, hub, e);
+                 }
+               })
+        )
+        .collect(Collectors.toList());
+      for (Future<?> future : futures) {
+        try {
+          future.get();
+        } catch (InterruptedException | ExecutionException e) {
+          LOG.warn("Ignoring error during plugin install", e);
+        }
+      }
     }
+  }
+
+  @VisibleForTesting
+  String getCurrentVersion() {
+    return VersionHelper.getCDAPVersion().getVersion();
+  }
+
+  // Returns true if capability applier should try to deploy this application. 2 conditions when it returns true:
+  // 1. Either the application is not deployed before.
+  // 2. If application is deployed before then the app artifact of the deployed application is not the latest one
+  //    available.
+  private boolean shouldDeployApp(ApplicationId applicationId, SystemApplication application) throws Exception {
+    ApplicationDetail currAppDetail;
+    try {
+      currAppDetail = applicationLifecycleService.getAppDetail(applicationId);
+    } catch (ApplicationNotFoundException exception) {
+      return true;
+    }
+    // Compare if the app artifact version of currently deployed application with highest version of app artifact
+    // available. If it's not same, capability applier should redeploy application.
+    ArtifactSummary summary = application.getArtifact();
+    NamespaceId artifactNamespace =
+      ArtifactScope.SYSTEM.equals(summary.getScope()) ? NamespaceId.SYSTEM : applicationId.getParent();
+    ArtifactRange range = new ArtifactRange(artifactNamespace.getNamespace(), summary.getName(),
+      ArtifactVersionRange.parse(summary.getVersion()));
+    // this method will not throw ArtifactNotFoundException, if no artifacts in the range, we are expecting an empty
+    // collection returned.
+    List<ArtifactDetail> artifactDetail = artifactRepository.getArtifactDetails(range, 1, ArtifactSortOrder.DESC);
+    if (artifactDetail.isEmpty()) {
+      throw new ArtifactNotFoundException(range.getNamespace(), range.getName());
+    }
+
+    ArtifactId latestArtifactId = artifactDetail.get(0).getDescriptor().getArtifactId();
+    // Compare the version of app artifact for deployed application and the latest available version of that
+    // same artifact. If same means no need to deploy the application again.
+    return !currAppDetail.getArtifact().getVersion().equals(latestArtifactId.getVersion().getVersion());
   }
 
   //Find all applications for capability and call consumer for each
@@ -311,8 +431,7 @@ class CapabilityApplier {
 
   private boolean shouldRetry(Throwable throwable) {
     return !(throwable instanceof UnauthorizedException ||
-      throwable instanceof InvalidArtifactException ||
-      throwable instanceof ArtifactNotFoundException);
+      throwable instanceof InvalidArtifactException);
   }
 
   /**

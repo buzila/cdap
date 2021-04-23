@@ -21,7 +21,10 @@ import io.cdap.cdap.api.dataset.lib.KeyValue;
 import io.cdap.cdap.etl.api.batch.BatchSink;
 import io.cdap.cdap.etl.common.TrackedTransform;
 import io.cdap.cdap.etl.common.TransformingEmitter;
+import org.apache.spark.api.java.function.PairFlatMapFunction;
 import scala.Tuple2;
+
+import java.util.Iterator;
 
 /**
  * Function that uses a BatchSink to transform one object into a pair.
@@ -31,20 +34,21 @@ import scala.Tuple2;
  * @param <OUT_KEY> type of output key
  * @param <OUT_VAL> type of output val
  */
-public class BatchSinkFunction<IN, OUT_KEY, OUT_VAL> implements PairFlatMapFunc<IN, OUT_KEY, OUT_VAL> {
+public class BatchSinkFunction<IN, OUT_KEY, OUT_VAL> implements PairFlatMapFunction<IN, OUT_KEY, OUT_VAL> {
   private final PluginFunctionContext pluginFunctionContext;
+  private final FunctionCache functionCache;
   private transient TrackedTransform<IN, KeyValue<OUT_KEY, OUT_VAL>> transform;
   private transient TransformingEmitter<KeyValue<OUT_KEY, OUT_VAL>, Tuple2<OUT_KEY, OUT_VAL>> emitter;
 
-  public BatchSinkFunction(PluginFunctionContext pluginFunctionContext) {
+  public BatchSinkFunction(PluginFunctionContext pluginFunctionContext, FunctionCache functionCache) {
     this.pluginFunctionContext = pluginFunctionContext;
+    this.functionCache = functionCache;
   }
 
   @Override
-  public Iterable<Tuple2<OUT_KEY, OUT_VAL>> call(IN input) throws Exception {
+  public Iterator<Tuple2<OUT_KEY, OUT_VAL>> call(IN input) throws Exception {
     if (transform == null) {
-      BatchSink<IN, OUT_KEY, OUT_VAL> batchSink = pluginFunctionContext.createPlugin();
-      batchSink.initialize(pluginFunctionContext.createBatchRuntimeContext());
+      BatchSink<IN, OUT_KEY, OUT_VAL> batchSink = pluginFunctionContext.createAndInitializePlugin(functionCache);
       transform = new TrackedTransform<>(batchSink, pluginFunctionContext.createStageMetrics(),
                                          pluginFunctionContext.getDataTracer(),
                                          pluginFunctionContext.getStageStatisticsCollector());
@@ -57,6 +61,6 @@ public class BatchSinkFunction<IN, OUT_KEY, OUT_VAL> implements PairFlatMapFunc<
     }
     emitter.reset();
     transform.transform(input, emitter);
-    return emitter.getEntries();
+    return emitter.getEntries().iterator();
   }
 }

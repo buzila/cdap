@@ -24,6 +24,7 @@ import com.google.common.io.Closeables;
 import com.google.common.io.Files;
 import com.google.common.io.Resources;
 import com.google.common.util.concurrent.Service;
+import com.google.gson.Gson;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
@@ -71,6 +72,7 @@ import io.cdap.cdap.common.namespace.NamespaceAdmin;
 import io.cdap.cdap.common.test.TestRunner;
 import io.cdap.cdap.common.twill.NoopTwillRunnerService;
 import io.cdap.cdap.common.utils.OSDetector;
+import io.cdap.cdap.config.PreferencesService;
 import io.cdap.cdap.data.runtime.DataFabricModules;
 import io.cdap.cdap.data.runtime.DataSetServiceModules;
 import io.cdap.cdap.data.runtime.DataSetsModules;
@@ -84,6 +86,9 @@ import io.cdap.cdap.explore.guice.ExploreClientModule;
 import io.cdap.cdap.explore.guice.ExploreRuntimeModule;
 import io.cdap.cdap.gateway.handlers.AuthorizationHandler;
 import io.cdap.cdap.internal.app.services.AppFabricServer;
+import io.cdap.cdap.internal.capability.CapabilityConfig;
+import io.cdap.cdap.internal.capability.CapabilityManagementService;
+import io.cdap.cdap.internal.capability.CapabilityStatus;
 import io.cdap.cdap.internal.profile.ProfileService;
 import io.cdap.cdap.internal.provision.MockProvisionerModule;
 import io.cdap.cdap.logging.guice.LocalLogAppenderModule;
@@ -153,6 +158,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.URL;
@@ -160,6 +166,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -214,6 +221,7 @@ public class TestBase {
   private static FieldLineageAdmin fieldLineageAdmin;
   private static LineageAdmin lineageAdmin;
   private static AppFabricServer appFabricServer;
+  private static PreferencesService preferencesService;
 
   // This list is to record ApplicationManager create inside @Test method
   private static final List<ApplicationManager> applicationManagers = new ArrayList<>();
@@ -232,9 +240,10 @@ public class TestBase {
     previewLevelDBTableService.setConfiguration(previewCConf);
 
     //enable default services
-    cConf.set(Constants.Capability.CONFIG_DIR, localDataDir.toString());
-    File capabilityFolder = new File(localDataDir.toString());
-    copyTempFile("pipeline.json", capabilityFolder);
+    File capabilityFolder = new File(localDataDir.toString(), "capability");
+    capabilityFolder.mkdir();
+    cConf.set(Constants.Capability.CONFIG_DIR, capabilityFolder.getAbsolutePath());
+    cConf.setInt(Constants.Capability.AUTO_INSTALL_THREADS, 5);
 
     org.apache.hadoop.conf.Configuration hConf = new org.apache.hadoop.conf.Configuration();
     hConf.addResource("mapred-site-local.xml");
@@ -386,6 +395,7 @@ public class TestBase {
     }
     appFabricServer = injector.getInstance(AppFabricServer.class);
     appFabricServer.startAndWait();
+    preferencesService = injector.getInstance(PreferencesService.class);
 
     scheduler = injector.getInstance(Scheduler.class);
     if (scheduler instanceof Service) {
@@ -394,6 +404,51 @@ public class TestBase {
     if (scheduler instanceof CoreSchedulerService) {
       ((CoreSchedulerService) scheduler).waitUntilFunctional(10, TimeUnit.SECONDS);
     }
+  }
+
+  /**
+   * Method for enabling capability, copies the corresponding config file to appropriate location.
+   * Calling method should ensure necessary Artifact is loaded before calling
+   * Capability run is initiated immediately, but there may be a small wait for Application
+   * to be deployed due to asynchronous calls and program to be running if applicable
+   *
+   * @param capability
+   * @throws IOException
+   * @throws InterruptedException
+   */
+  protected static void enableCapability(String capability) throws Exception {
+    copyConfigFile(capability);
+    injector.getInstance(CapabilityManagementService.class).runTask();
+  }
+
+  private static void copyConfigFile(String capability) throws IOException {
+    String capabilityFileName = String.format("%s.json", capability);
+    if (TestBase.class.getClassLoader().getResource(capabilityFileName) == null) {
+      //create a basic file to enable
+      File capabilityFile = new File(cConf.get(Constants.Capability.CONFIG_DIR),
+                                     String.format("%s.json", capability));
+      CapabilityConfig capabilityConfig = new CapabilityConfig("Enable", CapabilityStatus.ENABLED, capability,
+                                                               Collections.emptyList(), Collections.emptyList(),
+                                                               Collections.emptyList());
+      String content = new Gson().toJson(capabilityConfig);
+      try (FileWriter writer = new FileWriter(capabilityFile)) {
+        writer.write(content);
+      }
+      return;
+    }
+    copyTempFile(capabilityFileName, new File(cConf.get(Constants.Capability.CONFIG_DIR)));
+  }
+
+  /**
+   *
+   * @param capability
+   * @throws IOException
+   * @throws InterruptedException
+   */
+  protected static void removeCapability(String capability) throws Exception {
+    File capabilityFile = new File(cConf.get(Constants.Capability.CONFIG_DIR), String.format("%s.json", capability));
+    capabilityFile.delete();
+    injector.getInstance(CapabilityManagementService.class).runTask();
   }
 
   /**
@@ -450,6 +505,8 @@ public class TestBase {
     cConf.setBoolean(Constants.Explore.EXPLORE_ENABLED, true);
     cConf.setBoolean(Constants.Explore.START_ON_DEMAND, false);
     cConf.set(Constants.AppFabric.SYSTEM_ARTIFACTS_DIR, "");
+    //Set this to artificially big value to effectively disable SystemProgramManagementService
+    cConf.setLong(Constants.AppFabric.SYSTEM_PROGRAM_SCAN_INTERVAL_SECONDS, 3600 * 24 * 30);
 
     // Setup test case specific configurations.
     // The system properties are usually setup by TestConfiguration class using @ClassRule
@@ -633,6 +690,16 @@ public class TestBase {
     ApplicationManager appManager = getTestManager().deployApplication(appId, appRequest);
     applicationManagers.add(appManager);
     return appManager;
+  }
+
+  /**
+   * Creates and returns {@link ApplicationManager} for the passed {@link ApplicationId}
+   * @param appId
+   * @return
+   * @throws Exception
+   */
+  protected static ApplicationManager getApplicationManager(ApplicationId appId) throws Exception {
+    return getTestManager().getApplicationManager(appId);
   }
 
   /**
@@ -1018,6 +1085,12 @@ public class TestBase {
    */
   protected static CConfiguration getConfiguration() {
     return cConf;
+  }
+  /**
+   * Returns the {@link PreferencesService} used in tests.
+   */
+  public static PreferencesService getPreferencesService() {
+    return preferencesService;
   }
 
   /**

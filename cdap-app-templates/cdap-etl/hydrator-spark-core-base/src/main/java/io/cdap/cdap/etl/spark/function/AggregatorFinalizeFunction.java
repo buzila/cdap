@@ -23,7 +23,10 @@ import io.cdap.cdap.etl.common.Constants;
 import io.cdap.cdap.etl.common.RecordInfo;
 import io.cdap.cdap.etl.common.TrackedTransform;
 import io.cdap.cdap.etl.spark.CombinedEmitter;
+import org.apache.spark.api.java.function.FlatMapFunction;
 import scala.Tuple2;
+
+import java.util.Iterator;
 
 /**
  * Function that uses a BatchReducibleAggregator to perform the finalize part of the aggregator.
@@ -35,20 +38,22 @@ import scala.Tuple2;
  * @param <OUT> type of aggregate output
  */
 public class AggregatorFinalizeFunction<GROUP_KEY, GROUP_VAL, AGG_VAL, OUT>
-  implements FlatMapFunc<Tuple2<GROUP_KEY, AGG_VAL>, RecordInfo<Object>> {
+  implements FlatMapFunction<Tuple2<GROUP_KEY, AGG_VAL>, RecordInfo<Object>> {
   private final PluginFunctionContext pluginFunctionContext;
+  private final FunctionCache functionCache;
   private transient TrackedTransform<Tuple2<GROUP_KEY, AGG_VAL>, OUT> aggregateTransform;
   private transient CombinedEmitter<OUT> emitter;
 
-  public AggregatorFinalizeFunction(PluginFunctionContext pluginFunctionContext) {
+  public AggregatorFinalizeFunction(PluginFunctionContext pluginFunctionContext, FunctionCache functionCache) {
     this.pluginFunctionContext = pluginFunctionContext;
+    this.functionCache = functionCache;
   }
 
   @Override
-  public Iterable<RecordInfo<Object>> call(Tuple2<GROUP_KEY, AGG_VAL> input) throws Exception {
+  public Iterator<RecordInfo<Object>> call(Tuple2<GROUP_KEY, AGG_VAL> input) throws Exception {
     if (aggregateTransform == null) {
-      BatchReducibleAggregator<GROUP_KEY, GROUP_VAL, AGG_VAL, OUT> aggregator = pluginFunctionContext.createPlugin();
-      aggregator.initialize(pluginFunctionContext.createBatchRuntimeContext());
+      BatchReducibleAggregator<GROUP_KEY, GROUP_VAL, AGG_VAL, OUT> aggregator =
+        pluginFunctionContext.createAndInitializePlugin(functionCache);
       aggregateTransform = new TrackedTransform<>(new AggregateTransform<>(aggregator),
                                                   pluginFunctionContext.createStageMetrics(),
                                                   Constants.Metrics.AGG_GROUPS,
@@ -58,7 +63,7 @@ public class AggregatorFinalizeFunction<GROUP_KEY, GROUP_VAL, AGG_VAL, OUT>
     }
     emitter.reset();
     aggregateTransform.transform(input, emitter);
-    return emitter.getEmitted();
+    return emitter.getEmitted().iterator();
   }
 
   private static class AggregateTransform<GROUP_KEY, GROUP_VAL, AGG_VAL, OUT_VAL>

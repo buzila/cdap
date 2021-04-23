@@ -35,7 +35,6 @@ import io.cdap.cdap.common.metrics.MetricsReporterHook;
 import io.cdap.cdap.common.security.HttpsEnabler;
 import io.cdap.cdap.internal.app.store.AppMetadataStore;
 import io.cdap.cdap.internal.bootstrap.BootstrapService;
-import io.cdap.cdap.internal.capability.CapabilityManagementService;
 import io.cdap.cdap.internal.provision.ProvisioningService;
 import io.cdap.cdap.internal.sysapp.SystemAppManagementService;
 import io.cdap.cdap.proto.id.NamespaceId;
@@ -43,6 +42,7 @@ import io.cdap.cdap.scheduler.CoreSchedulerService;
 import io.cdap.cdap.spi.data.transaction.TransactionRunner;
 import io.cdap.cdap.spi.data.transaction.TransactionRunners;
 import io.cdap.cdap.spi.data.transaction.TxCallable;
+import io.cdap.cdap.store.DefaultNamespaceStore;
 import io.cdap.http.HttpHandler;
 import io.cdap.http.NettyHttpService;
 import org.apache.twill.common.Cancellable;
@@ -82,7 +82,6 @@ public class AppFabricServer extends AbstractIdleService {
   private final SConfiguration sConf;
   private final boolean sslEnabled;
   private final TransactionRunner transactionRunner;
-  private final CapabilityManagementService capabilityManagementService;
 
   private Cancellable cancelHttpService;
   private Set<HttpHandler> handlers;
@@ -107,7 +106,6 @@ public class AppFabricServer extends AbstractIdleService {
                          ProvisioningService provisioningService,
                          BootstrapService bootstrapService,
                          SystemAppManagementService systemAppManagementService,
-                         CapabilityManagementService capabilityManagementService,
                          TransactionRunner transactionRunner) {
     this.hostname = hostname;
     this.discoveryService = discoveryService;
@@ -126,7 +124,6 @@ public class AppFabricServer extends AbstractIdleService {
     this.provisioningService = provisioningService;
     this.bootstrapService = bootstrapService;
     this.systemAppManagementService = systemAppManagementService;
-    this.capabilityManagementService = capabilityManagementService;
     this.transactionRunner = transactionRunner;
   }
 
@@ -146,8 +143,7 @@ public class AppFabricServer extends AbstractIdleService {
         programRuntimeService.start(),
         programNotificationSubscriberService.start(),
         runRecordCorrectorService.start(),
-        coreSchedulerService.start(),
-        capabilityManagementService.start()
+        coreSchedulerService.start()
       )
     ).get();
 
@@ -176,11 +172,15 @@ public class AppFabricServer extends AbstractIdleService {
     }
 
     cancelHttpService = startHttpService(httpServiceBuilder.build());
-    long count = TransactionRunners.run(transactionRunner,
-                                        (TxCallable<Long>) context ->
-                                          AppMetadataStore.create(context).getApplicationCount());
+    long applicationCount = TransactionRunners.run(transactionRunner,
+                                                   (TxCallable<Long>) context ->
+                                                     AppMetadataStore.create(context).getApplicationCount());
+    long namespaceCount = new DefaultNamespaceStore(transactionRunner).getNamespaceCount();
+
     metricsCollectionService.getContext(Collections.emptyMap()).gauge(Constants.Metrics.Program.APPLICATION_COUNT,
-                                                                      count);
+                                                                      applicationCount);
+    metricsCollectionService.getContext(Collections.emptyMap()).gauge(Constants.Metrics.Program.NAMESPACE_COUNT,
+                                                                      namespaceCount);
   }
 
   @Override
@@ -194,7 +194,6 @@ public class AppFabricServer extends AbstractIdleService {
     programNotificationSubscriberService.stopAndWait();
     runRecordCorrectorService.stopAndWait();
     provisioningService.stopAndWait();
-    capabilityManagementService.stopAndWait();
   }
 
   private Cancellable startHttpService(NettyHttpService httpService) throws Exception {

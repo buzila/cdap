@@ -1,5 +1,5 @@
 /*
- * Copyright © 2015-2016 Cask Data, Inc.
+ * Copyright © 2015-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -22,6 +22,7 @@ package io.cdap.cdap.etl.common;
 public final class Constants {
   public static final String ID_SEPARATOR = ":";
   public static final String PIPELINEID = "pipeline";
+  public static final String STUDIO_SERVICE_NAME = "studio";
   public static final String PIPELINE_SPEC_KEY = "pipeline.spec";
   public static final String STAGE_LOGGING_ENABLED = "stage.logging.enabled";
   public static final String EVENT_TYPE_TAG = "MDC:eventType";
@@ -33,6 +34,10 @@ public final class Constants {
   public static final String SPARK_PIPELINE_AUTOCACHE_ENABLE_FLAG = "spark.cdap.pipeline.autocache.enable";
   public static final String SPARK_PIPELINE_CACHING_STORAGE_LEVEL = "spark.cdap.pipeline.caching.storage.level";
   public static final String CONSOLIDATE_STAGES = "spark.cdap.pipeline.consolidate.stages";
+  public static final String CACHE_FUNCTIONS = "spark.cdap.pipeline.functioncache.enable";
+  public static final String DATASET_AGGREGATE_ENABLED = "spark.cdap.pipeline.aggregate.dataset.enable";
+  public static final String DATASET_AGGREGATE_IGNORE_PARTITIONS =
+    "spark.cdap.pipeline.aggregate.dataset.partitions.ignore";
   public static final String DEFAULT_CACHING_STORAGE_LEVEL = "DISK_ONLY";
 
   private Constants() {

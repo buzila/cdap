@@ -25,6 +25,9 @@ import uuidV4 from 'uuid/v4';
 import round from 'lodash/round';
 import React from 'react';
 import { connect } from 'react-redux';
+// We don't use webpack alias here because this is used in Footer which is used in login app
+// And for login 'components/Lab/..' aliases to components folder inside login app.
+import experimentsList from '../components/Lab/experiment-list.tsx';
 /*
   Purpose: Query a json object or an array of json objects
   Return: Returns undefined if property is not defined(never set) and
@@ -98,7 +101,7 @@ function truncateNumber(num, precision = 0) {
 
   let format = '0';
   if (precision === 0) {
-    return numeral(num).format(`${format}a`);
+    return numeral(num).format(`${format}a`).toUpperCase();
   }
 
   format = format.concat('.');
@@ -109,7 +112,7 @@ function truncateNumber(num, precision = 0) {
 
   format = `${format}a`;
 
-  return numeral(num).format(format);
+  return numeral(num).format(format).toUpperCase();
 }
 
 // FIXME: humanReadableDate(date, options = {isMilliseconds: false, shortForm: false}) would have been\
@@ -682,6 +685,43 @@ function isValidEntityName(name) {
 
   return pattern.test(name);
 }
+function setupExperiments() {
+  return experimentsList.map((experiment) => {
+    // If the experiment is forcefully disabled do not check
+    // the localStorage. Update localStorage with disabled state.
+    if (experiment.force && !experiment.enabled) {
+      window.localStorage.setItem(experiment.experimentId, experiment.enabled.toString());
+      return;
+    }
+    // If experiment preference is present in storage, use it.
+    // If not, use the default value and set it in storage and use it.
+    const experimentStatusFromStorage = window.localStorage.getItem(experiment.experimentId);
+    if (experimentStatusFromStorage === null) {
+      window.localStorage.setItem(experiment.experimentId, experiment.enabled.toString());
+    } else {
+      experiment.enabled = experimentStatusFromStorage === 'true';
+    }
+    return experiment;
+  });
+};
+
+function isAuthSetToProxyMode() {
+  return window.CDAP_CONFIG.securityEnabled &&  window.CDAP_CONFIG.securityMode === 'PROXY';
+}
+
+function isAuthSetToManagedMode() {
+  return (
+    window.CDAP_CONFIG.securityEnabled
+    && ['', undefined, 'MANAGED'].indexOf(window.CDAP_CONFIG.securityMode) !== -1
+  );
+}
+
+function santizeStringForHTMLID(str) {
+  if (typeof str !== 'string') {
+    return str;
+  }
+  return str.replace(/[ \/]/g, '-');
+}
 
 export {
   objectQuery,
@@ -731,4 +771,9 @@ export {
   isExperimentEnabled,
   sanitizeNodeNamesInPluginProperties,
   isValidEntityName,
+  setupExperiments,
+  defaultEventObject,
+  isAuthSetToProxyMode,
+  isAuthSetToManagedMode,
+  santizeStringForHTMLID,
 };

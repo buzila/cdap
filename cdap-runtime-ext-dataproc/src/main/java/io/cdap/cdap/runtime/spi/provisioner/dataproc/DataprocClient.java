@@ -48,12 +48,14 @@ import com.google.cloud.dataproc.v1.EndpointConfig;
 import com.google.cloud.dataproc.v1.GceClusterConfig;
 import com.google.cloud.dataproc.v1.GetClusterRequest;
 import com.google.cloud.dataproc.v1.InstanceGroupConfig;
+import com.google.cloud.dataproc.v1.LifecycleConfig;
 import com.google.cloud.dataproc.v1.NodeInitializationAction;
 import com.google.cloud.dataproc.v1.SoftwareConfig;
 import com.google.cloud.dataproc.v1.UpdateClusterRequest;
 import com.google.common.base.Strings;
 import com.google.longrunning.Operation;
 import com.google.longrunning.OperationsClient;
+import com.google.protobuf.Duration;
 import com.google.protobuf.FieldMask;
 import com.google.rpc.Status;
 import io.cdap.cdap.runtime.spi.common.DataprocUtils;
@@ -80,6 +82,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
@@ -89,12 +92,14 @@ import javax.annotation.Nullable;
 final class DataprocClient implements AutoCloseable {
 
   private static final Logger LOG = LoggerFactory.getLogger(DataprocClient.class);
-  // something like 2018-04-16T12:09:03.943-07:00
-  private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss.SSSX");
   private static final List<IPRange> PRIVATE_IP_RANGES = DataprocUtils.parseIPRanges(Arrays.asList("10.0.0.0/8",
                                                                                                    "172.16.0.0/12",
                                                                                                    "192.168.0.0/16"));
   static final String DATAPROC_GOOGLEAPIS_COM_443 = "-dataproc.googleapis.com:443";
+  private static final int MIN_DEFAULT_CONCURRENCY = 32;
+  private static final int PARTITION_NUM_FACTOR = 32;
+  private static final int MIN_INITIAL_PARTITIONS_DEFAULT = 128;
+  private static final int MAX_INITIAL_PARTITIONS_DEFAULT = 8192;
   private final DataprocConf conf;
   private final ClusterControllerClient client;
   private final Compute compute;
@@ -415,6 +420,23 @@ final class DataprocClient implements AutoCloseable {
         .setPreemptibility(InstanceGroupConfig.Preemptibility.NON_PREEMPTIBLE)
         .setDiskConfig(workerDiskConfig);
 
+      //Set default concurrency settings for fixed cluster
+      if (Strings.isNullOrEmpty(conf.getAutoScalingPolicy())) {
+        //Set spark.default.parallelism according to cluster size.
+        //Spark defaults it to number of current executors, but when we configure the job
+        //executors may not have started yet, so this value gets artificially low.
+        int defaultConcurrency = Math.max(conf.getTotalWorkerCPUs(), MIN_DEFAULT_CONCURRENCY);
+        //Set spark.sql.adaptive.coalescePartitions.initialPartitionNum as 32x of default parallelism,
+        //but no more than 8192. This value is used only in spark 3 with adaptive execution and
+        //according to our tests spark can handle really large numbers and 32x is a reasonable default.
+        int initialPartitionNum = Math.min(
+          Math.max(conf.getTotalWorkerCPUs() * PARTITION_NUM_FACTOR, MIN_INITIAL_PARTITIONS_DEFAULT),
+          MAX_INITIAL_PARTITIONS_DEFAULT);
+        clusterProperties.putIfAbsent("spark:spark.default.parallelism", Integer.toString(defaultConcurrency));
+        clusterProperties.putIfAbsent("spark:spark.sql.adaptive.coalescePartitions.initialPartitionNum",
+                                      Integer.toString(initialPartitionNum));
+      }
+
       SoftwareConfig.Builder softwareConfigBuilder = SoftwareConfig.newBuilder()
           .putAllProperties(clusterProperties);
       //Use image version only if custom Image URI is not specified, otherwise may cause image version conflicts
@@ -425,6 +447,7 @@ final class DataprocClient implements AutoCloseable {
         primaryWorkerConfig.setImageUri(conf.getCustomImageUri());
         secondaryWorkerConfig.setImageUri(conf.getCustomImageUri());
       }
+
       ClusterConfig.Builder builder = ClusterConfig.newBuilder()
         .setEndpointConfig(EndpointConfig.newBuilder()
                              .setEnableHttpPortAccess(conf.isComponentGatewayEnabled())
@@ -442,6 +465,13 @@ final class DataprocClient implements AutoCloseable {
         .setSecondaryWorkerConfig(secondaryWorkerConfig.build())
         .setGceClusterConfig(clusterConfig.build())
         .setSoftwareConfig(softwareConfigBuilder);
+
+      //Cluster TTL if one should be set
+      if (conf.getIdleTTLMinutes() > 0) {
+        long seconds = TimeUnit.MINUTES.toSeconds(conf.getIdleTTLMinutes());
+        builder.setLifecycleConfig(LifecycleConfig.newBuilder()
+                                     .setIdleDeleteTtl(Duration.newBuilder().setSeconds(seconds).build()).build());
+      }
 
       //Add any Node Initialization action scripts
       for (String action : conf.getInitActions()) {
@@ -865,7 +895,9 @@ final class DataprocClient implements AutoCloseable {
 
     long ts;
     try {
-      ts = DATE_FORMAT.parse(instance.getCreationTimestamp()).getTime();
+      // something like 2018-04-16T12:09:03.943-07:00
+      SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'hh:mm:ss.SSSX");
+      ts = sdf.parse(instance.getCreationTimestamp()).getTime();
     } catch (ParseException | NumberFormatException e) {
       LOG.debug("Fail to parse creation ts {}", instance.getCreationTimestamp(), e);
       ts = -1L;

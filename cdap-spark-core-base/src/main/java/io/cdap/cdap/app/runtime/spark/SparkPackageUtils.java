@@ -1,5 +1,5 @@
 /*
- * Copyright © 2017 Cask Data, Inc.
+ * Copyright © 2017-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -19,7 +19,6 @@ package io.cdap.cdap.app.runtime.spark;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
-import com.google.common.collect.Iterables;
 import io.cdap.cdap.common.conf.Constants;
 import io.cdap.cdap.common.lang.ClassLoaders;
 import io.cdap.cdap.common.utils.DirUtils;
@@ -37,25 +36,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.Reader;
 import java.io.Writer;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -63,6 +61,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -92,6 +94,8 @@ public final class SparkPackageUtils {
   private static final String PYSPARK_ARCHIVES_PATH = "PYSPARK_ARCHIVES_PATH";
   // File name for the spark default config
   private static final String SPARK_DEFAULTS_CONF = "spark-defaults.conf";
+  // File name for the spark environment script
+  private static final String SPARK_ENV_SH = "spark-env.sh";
   // Spark1 conf key for spark-assembly jar location
   private static final String SPARK_YARN_JAR = "spark.yarn.jar";
   // Spark2 conf key for spark archive (zip of jars) location
@@ -145,17 +149,7 @@ public final class SparkPackageUtils {
       URL sparkURL = ClassLoaders.getClassPathURL("org.apache.spark.SparkContext", sparkContextURL);
       LOCAL_SPARK_LIBRARIES.put(sparkCompat, Collections.singleton(new File(sparkURL.getPath())));
     } else {
-      switch (sparkCompat) {
-        case SPARK1_2_10:
-          LOCAL_SPARK_LIBRARIES.put(sparkCompat, Collections.singleton(getSpark1AssemblyJar(sparkLibrary, sparkHome)));
-          break;
-        case SPARK2_2_11:
-          LOCAL_SPARK_LIBRARIES.put(sparkCompat, getSpark2LibraryJars(sparkLibrary, sparkHome));
-          break;
-        default:
-          // This shouldn't happen
-          throw new IllegalStateException("Unsupported Spark version " + sparkCompat);
-      }
+      LOCAL_SPARK_LIBRARIES.put(sparkCompat, getSparkLibraryJars(sparkLibrary, sparkHome));
     }
 
     return LOCAL_SPARK_LIBRARIES.get(sparkCompat);
@@ -303,81 +297,20 @@ public final class SparkPackageUtils {
   }
 
   /**
-   * Locates the spark-assembly jar from the local file system for Spark1.
-   *
-   * @param sparkLibrary file path to the spark-assembly jar in the local file system
-   * @param sparkHome file path to the spark home.
-   *
-   * @return the spark-assembly jar location
-   * @throws IllegalStateException if cannot locate the spark assembly jar
-   */
-  private static File getSpark1AssemblyJar(@Nullable String sparkLibrary, String sparkHome) {
-    if (sparkLibrary != null) {
-      return new File(sparkLibrary);
-    }
-
-    // Look for spark-assembly.jar symlink
-    Path assemblyJar = Paths.get(sparkHome, "lib", "spark-assembly.jar");
-    if (Files.isSymbolicLink(assemblyJar)) {
-      try {
-        return assemblyJar.toRealPath().toFile();
-      } catch (IOException e) {
-        LOG.warn("Failed to resolve symbolic link for {}.", assemblyJar);
-      }
-    }
-
-    // No symbolic link exists. Search for spark-assembly*.jar in the lib directory
-    final List<Path> jar = new ArrayList<>(1);
-    Path sparkLib = Paths.get(sparkHome, "lib");
-    final PathMatcher pathMatcher = sparkLib.getFileSystem().getPathMatcher("glob:spark-assembly*.jar");
-    try {
-      Files.walkFileTree(sparkLib, new SimpleFileVisitor<Path>() {
-        @Override
-        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-          // Take the first file match
-          if (attrs.isRegularFile() && pathMatcher.matches(file.getFileName())) {
-            jar.add(file);
-            return FileVisitResult.TERMINATE;
-          }
-          return FileVisitResult.CONTINUE;
-        }
-
-        @Override
-        public FileVisitResult visitFileFailed(Path file, IOException exc) throws IOException {
-          // Ignore error
-          return FileVisitResult.CONTINUE;
-        }
-
-      });
-
-    } catch (IOException e) {
-      // Just log, don't throw.
-      // If we already located the Spark Assembly jar during visiting, we can still use the jar.
-      LOG.warn("Exception raised while inspecting {}", sparkLib, e);
-    }
-
-    Preconditions.checkState(!jar.isEmpty(), "Failed to locate Spark library from %s", sparkHome);
-
-    assemblyJar = jar.get(0);
-    LOG.debug("Located Spark Assembly JAR in {}", assemblyJar);
-    return assemblyJar.toFile();
-  }
-
-  /**
-   * Finds the set of jar files for the Spark libarary and its dependencies in local file system for Spark2.
+   * Finds the set of jar files for the Spark libarary and its dependencies in local file system.
    *
    * @param sparkLibrary file path to the spark-assembly jar in the local file system
    * @param sparkHome file path to the spark home.
    * @return A set of jar files
    * @throws IllegalStateException if no jar file is found
    */
-  private static Set<File> getSpark2LibraryJars(@Nullable String sparkLibrary, String sparkHome) {
+  private static Set<File> getSparkLibraryJars(@Nullable String sparkLibrary, String sparkHome) {
     // There should be a jars directory under SPARK_HOME.
     File jarsDir = sparkLibrary == null ? new File(sparkHome, "jars") : new File(sparkLibrary);
-    Preconditions.checkState(jarsDir.isDirectory(), "Expected %s to be a directory for Spark2", jarsDir);
+    Preconditions.checkState(jarsDir.isDirectory(), "Expected %s to be a directory for Spark", jarsDir);
 
     Set<File> jars = new HashSet<>(DirUtils.listFiles(jarsDir, "jar"));
-    Preconditions.checkState(!jars.isEmpty(), "No jar files found in %s for Spark2", jarsDir);
+    Preconditions.checkState(!jars.isEmpty(), "No jar files found in %s for Spark", jarsDir);
     LOG.debug("Located Spark library in in {}", jarsDir);
     return jars;
   }
@@ -390,7 +323,8 @@ public final class SparkPackageUtils {
       return sparkEnv;
     }
 
-    Map<String, String> env = new LinkedHashMap<>(System.getenv());
+    Map<String, String> env = new LinkedHashMap<>(loadSparkEnv(System.getenv(SPARK_HOME)));
+    env.putAll(System.getenv());
 
     // Overwrite the system environments with the one set up by the startup script in functions.sh
     for (Map.Entry<String, String> entry : System.getenv().entrySet()) {
@@ -490,63 +424,13 @@ public final class SparkPackageUtils {
     }
 
     Properties sparkConf = getSparkDefaultConf();
-    switch (sparkCompat) {
-      case SPARK1_2_10:
-        SPARK_FRAMEWORKS.put(sparkCompat, prepareSpark1Framework(sparkConf, lf));
-      break;
-
-      case SPARK2_2_11:
-        SPARK_FRAMEWORKS.put(sparkCompat, prepareSpark2Framework(sparkConf, lf, tempDir));
-      break;
-
-      default:
-        throw new IllegalArgumentException("Unsupported spark version " + sparkCompat);
-    }
+    SPARK_FRAMEWORKS.put(sparkCompat, prepareSparkFramework(sparkCompat, sparkConf, lf, tempDir));
 
     return SPARK_FRAMEWORKS.get(sparkCompat);
   }
 
   /**
-   * Prepares the Spark 1 framework on the location
-   *
-   * @param sparkConf the spark configuration
-   * @param locationFactory the {@link LocationFactory} for saving the spark framework jar
-   * @return A {@link SparkFramework} containing information about the spark framework in localization context.
-   * @throws IOException If failed to prepare the framework.
-   */
-  private static SparkFramework prepareSpark1Framework(Properties sparkConf,
-                                                       LocationFactory locationFactory) throws IOException {
-    String sparkYarnJar = sparkConf.getProperty(SPARK_YARN_JAR);
-
-    if (sparkYarnJar != null) {
-      URI sparkYarnJarURI = URI.create(sparkYarnJar);
-      if (locationFactory.getHomeLocation().toURI().getScheme().equals(sparkYarnJarURI.getScheme())) {
-        Location frameworkLocation = locationFactory.create(sparkYarnJarURI);
-        if (frameworkLocation.exists()) {
-          return new SparkFramework(new LocalizeResource(resolveURI(frameworkLocation), false), SPARK_YARN_JAR);
-        }
-        LOG.warn("The location {} set by '{}' does not exist.", frameworkLocation, SPARK_YARN_JAR);
-      }
-    }
-
-    // If spark.yarn.jar is not defined or doesn't exists, get the spark-assembly jar from local FS and upload it
-    File sparkAssemblyJar = Iterables.getFirst(getLocalSparkLibrary(SparkCompat.SPARK1_2_10), null);
-    Location frameworkDir = locationFactory.create("/framework/spark");
-    Location frameworkLocation = frameworkDir.append(VersionInfo.getVersion() + "-" + sparkAssemblyJar.getName());
-
-    // Upload assembly jar to the framework location if not exists
-    if (!frameworkLocation.exists()) {
-      frameworkDir.mkdirs("755");
-
-      try (OutputStream os = frameworkLocation.getOutputStream("644")) {
-        Files.copy(sparkAssemblyJar.toPath(), os);
-      }
-    }
-    return new SparkFramework(new LocalizeResource(resolveURI(frameworkLocation), false), SPARK_YARN_JAR);
-  }
-
-  /**
-   * Prepares the Spark 2 framework on the location.
+   * Prepares the Spark framework on the location.
    *
    * @param sparkConf the spark configuration
    * @param locationFactory the {@link LocationFactory} for saving the spark framework jar
@@ -554,8 +438,10 @@ public final class SparkPackageUtils {
    * @return A {@link SparkFramework} containing information about the spark framework in localization context.
    * @throws IOException If failed to prepare the framework.
    */
-  private static SparkFramework prepareSpark2Framework(Properties sparkConf, LocationFactory locationFactory,
-                                                       File tempDir) throws IOException {
+  private static SparkFramework prepareSparkFramework(SparkCompat sparkCompat,
+                                                      Properties sparkConf,
+                                                      LocationFactory locationFactory,
+                                                      File tempDir) throws IOException {
     String sparkYarnArchive = sparkConf.getProperty(SPARK_YARN_ARCHIVE);
 
     if (sparkYarnArchive != null) {
@@ -571,7 +457,7 @@ public final class SparkPackageUtils {
 
     // If spark.yarn.archive is not defined or doesn't exists, build a archive zip from local FS and upload it
     String sparkVersion = System.getenv(SPARK_VERSION);
-    sparkVersion = sparkVersion == null ? SparkCompat.SPARK2_2_11.getCompat() : sparkVersion;
+    sparkVersion = sparkVersion == null ? sparkCompat.getCompat() : sparkVersion;
 
     String archiveName = "spark.archive-" + sparkVersion + "-" + VersionInfo.getVersion() + ".zip";
     Location frameworkDir = locationFactory.create("/framework/spark");
@@ -582,7 +468,7 @@ public final class SparkPackageUtils {
       try {
         try (ZipOutputStream zipOutput = new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(archive)))) {
           zipOutput.setLevel(Deflater.NO_COMPRESSION);
-          for (File file : getLocalSparkLibrary(SparkCompat.SPARK2_2_11)) {
+          for (File file : getLocalSparkLibrary(sparkCompat)) {
             zipOutput.putNextEntry(new ZipEntry(file.getName()));
             Files.copy(file.toPath(), zipOutput);
             zipOutput.closeEntry();
@@ -621,6 +507,74 @@ public final class SparkPackageUtils {
     org.apache.hadoop.fs.Path path = new org.apache.hadoop.fs.Path(location.toURI().getPath());
     path = path.getFileSystem(hConf).makeQualified(path);
     return ((FileContextLocationFactory) locationFactory).getFileContext().resolvePath(path).toUri();
+  }
+
+  /**
+   * Loads the enviroment variables setup by the spark-env.sh file.
+   * @return
+   */
+  private static Map<String, String> loadSparkEnv(@Nullable String sparkHome) {
+    if (sparkHome == null) {
+      return Collections.emptyMap();
+    }
+    Path sparkEnvSh = Paths.get(sparkHome, "conf", SPARK_ENV_SH);
+    if (!Files.isReadable(sparkEnvSh)) {
+      LOG.debug("Skip reading {} for Spark environment due to unreadable file");
+      return Collections.emptyMap();
+    }
+
+    try {
+      // Run the spark-env.sh script and capture the environment variables in the output
+      ProcessBuilder processBuilder = new ProcessBuilder()
+        .command("/bin/sh", "-ac", String.format(". %s; printenv", sparkEnvSh.toAbsolutePath().toString()))
+        .redirectErrorStream(true);
+
+      processBuilder.environment().clear();
+      Process process = processBuilder.start();
+
+      CompletableFuture<Map<String, String>> output = new CompletableFuture<>();
+      Thread t = new Thread(() -> {
+        Map<String, String> envs = new HashMap<>();
+        Pattern pattern = Pattern.compile("(SPARK_.*?)=(.+)");
+
+        // Parse the output to extract environment variables
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(),
+                                                                              StandardCharsets.UTF_8))) {
+          String line = reader.readLine();
+          while (line != null) {
+            Matcher matcher = pattern.matcher(line);
+            if (matcher.matches()) {
+              envs.put(matcher.group(1), matcher.group(2));
+            }
+            line = reader.readLine();
+          }
+
+          output.complete(envs);
+        } catch (IOException e) {
+          output.completeExceptionally(e);
+        }
+      });
+      t.setDaemon(true);
+      t.start();
+
+      // Should not take long for the shell command to complete
+      if (!process.waitFor(10, TimeUnit.SECONDS)) {
+        process.destroyForcibly();
+        LOG.warn("Failed to read Spark environment from {} with process taking longer than 10 seconds to complete",
+                 sparkEnvSh);
+        return Collections.emptyMap();
+      }
+      int exitValue = process.exitValue();
+      if (exitValue != 0) {
+        LOG.warn("Failed to read Spark environment from {} with process failed with exit code {}",
+                 sparkEnvSh, exitValue);
+        return Collections.emptyMap();
+      }
+      return output.get();
+    } catch (Exception e) {
+      LOG.warn("Failed to read Spark enviroment from {} due to failure", sparkEnvSh, e);
+      return Collections.emptyMap();
+    }
   }
 
   private SparkPackageUtils() {

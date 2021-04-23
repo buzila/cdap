@@ -1,5 +1,5 @@
 /*
- * Copyright © 2014-2019 Cask Data, Inc.
+ * Copyright © 2014-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -140,7 +140,9 @@ public class DatasetServiceAuthorizationTest extends DatasetServiceTestBase {
       dsFramework.deleteAllInstances(NamespaceId.DEFAULT);
       Assert.fail();
     } catch (Exception e) {
-      Assert.assertTrue(e.getMessage().contains("is not authorized to perform actions"));
+      if (!(e instanceof UnauthorizedException)) {
+        Assert.fail();
+      }
     }
     // alice should still be able to see all dataset instances
     Assert.assertEquals(ImmutableSet.of(dsId1, dsId2, dsId),
@@ -192,7 +194,9 @@ public class DatasetServiceAuthorizationTest extends DatasetServiceTestBase {
       dsFramework.getDatasetSpec(nonExistingInstance);
       Assert.fail();
     } catch (Exception e) {
-      Assert.assertTrue(e.getMessage().contains("is not authorized to perform any one of the actions"));
+      if (!(e instanceof UnauthorizedException)) {
+        Assert.fail();
+      }
     }
     try {
       // user will not be able to check the existence on the instance since he does not have any privilege on the
@@ -201,7 +205,9 @@ public class DatasetServiceAuthorizationTest extends DatasetServiceTestBase {
       Assert.fail();
     } catch (Exception e) {
       // expected
-      Assert.assertTrue(e.getMessage().contains("is not authorized to perform any one of the actions"));
+      if (!(e instanceof UnauthorizedException)) {
+        Assert.fail();
+      }
     }
     SecurityRequestContext.setUserId(ALICE.getName());
     // user need to have access to the dataset to do any operations, even though the dataset does not exist

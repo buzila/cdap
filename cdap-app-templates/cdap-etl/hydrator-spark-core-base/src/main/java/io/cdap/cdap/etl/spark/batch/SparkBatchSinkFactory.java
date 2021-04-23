@@ -24,12 +24,15 @@ import io.cdap.cdap.api.spark.JavaSparkExecutionContext;
 import io.cdap.cdap.etl.common.Constants;
 import io.cdap.cdap.etl.common.output.MultiOutputFormat;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapreduce.MRJobConfig;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Tuple2;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -133,7 +136,7 @@ public final class SparkBatchSinkFactory {
     }
     MultiOutputFormat.addOutputs(hConf, outputs, groupSinkOutputs);
     hConf.set(MRJobConfig.OUTPUT_FORMAT_CLASS_ATTR, MultiOutputFormat.class.getName());
-    combinedRDD.saveAsNewAPIHadoopDataset(hConf);
+    RDDUtils.saveHadoopDataset(combinedRDD, hConf);
     return lineageNames;
   }
 
@@ -169,7 +172,7 @@ public final class SparkBatchSinkFactory {
     }
 
     if (outputFormats.size() == 1) {
-      saveUsingOutputFormat(outputFormats.values().iterator().next(), rdd);
+      RDDUtils.saveUsingOutputFormat(outputFormats.values().iterator().next(), rdd);
       return lineageNames;
     }
 
@@ -181,17 +184,8 @@ public final class SparkBatchSinkFactory {
     // send to the delegate output format.
     JavaPairRDD<String, KeyValue<K, V>> multiRDD =
       rdd.mapToPair(kv -> new Tuple2<>(sinkName, new KeyValue<>(kv._1(), kv._2())));
-    multiRDD.saveAsNewAPIHadoopDataset(hConf);
+    RDDUtils.saveHadoopDataset(multiRDD, hConf);
     return lineageNames;
-  }
-
-  private void saveUsingOutputFormat(OutputFormatProvider outputFormatProvider, JavaPairRDD<?, ?> rdd) {
-    Configuration hConf = new Configuration();
-    for (Map.Entry<String, String> entry : outputFormatProvider.getOutputFormatConfiguration().entrySet()) {
-      hConf.set(entry.getKey(), entry.getValue());
-    }
-    hConf.set(MRJobConfig.OUTPUT_FORMAT_CLASS_ATTR, outputFormatProvider.getOutputFormatClassName());
-    rdd.saveAsNewAPIHadoopDataset(hConf);
   }
 
   private void addStageOutput(String stageName, String outputName) {

@@ -32,11 +32,12 @@ import io.cdap.cdap.etl.common.PipelineRuntime;
 import io.cdap.cdap.etl.common.RecordInfo;
 import io.cdap.cdap.etl.common.StageStatisticsCollector;
 import io.cdap.cdap.etl.proto.v2.spec.StageSpec;
-import io.cdap.cdap.etl.spark.Compat;
 import io.cdap.cdap.etl.spark.SparkCollection;
 import io.cdap.cdap.etl.spark.SparkPairCollection;
 import io.cdap.cdap.etl.spark.SparkPipelineRuntime;
 import io.cdap.cdap.etl.spark.batch.BasicSparkExecutionPluginContext;
+import io.cdap.cdap.etl.spark.function.FunctionCache;
+import io.cdap.cdap.etl.spark.join.JoinExpressionRequest;
 import io.cdap.cdap.etl.spark.join.JoinRequest;
 import io.cdap.cdap.etl.spark.streaming.function.ComputeTransformFunction;
 import io.cdap.cdap.etl.spark.streaming.function.CountingTransformFunction;
@@ -49,12 +50,16 @@ import io.cdap.cdap.etl.spark.streaming.function.StreamingBatchSinkFunction;
 import io.cdap.cdap.etl.spark.streaming.function.StreamingMultiSinkFunction;
 import io.cdap.cdap.etl.spark.streaming.function.StreamingSparkSinkFunction;
 import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.FlatMapFunction;
 import org.apache.spark.api.java.function.Function;
+import org.apache.spark.api.java.function.Function2;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
+import org.apache.spark.api.java.function.VoidFunction2;
 import org.apache.spark.storage.StorageLevel;
 import org.apache.spark.streaming.Durations;
+import org.apache.spark.streaming.Time;
 import org.apache.spark.streaming.api.java.JavaDStream;
 import org.apache.spark.streaming.api.java.JavaPairDStream;
 
@@ -71,9 +76,13 @@ public class DStreamCollection<T> implements SparkCollection<T> {
 
   private final JavaSparkExecutionContext sec;
   private final JavaDStream<T> stream;
+  private final FunctionCache.Factory functionCacheFactory;
 
-  public DStreamCollection(JavaSparkExecutionContext sec, JavaDStream<T> stream) {
+  public DStreamCollection(JavaSparkExecutionContext sec,
+                           FunctionCache.Factory functionCacheFactory,
+                           JavaDStream<T> stream) {
     this.sec = sec;
+    this.functionCacheFactory = functionCacheFactory;
     this.stream = stream;
   }
 
@@ -104,13 +113,19 @@ public class DStreamCollection<T> implements SparkCollection<T> {
 
   @Override
   public SparkCollection<RecordInfo<Object>> transform(StageSpec stageSpec, StageStatisticsCollector collector) {
-    return wrap(stream.transform(new DynamicTransform<T>(new DynamicDriverContext(stageSpec, sec, collector), false)));
+    return wrap(stream.transform(new DynamicTransform<T>(
+      new DynamicDriverContext(stageSpec, sec, collector),
+      functionCacheFactory.newCache(),
+      false)));
   }
 
   @Override
   public SparkCollection<RecordInfo<Object>> multiOutputTransform(StageSpec stageSpec,
                                                                   StageStatisticsCollector collector) {
-    return wrap(stream.transform(new DynamicTransform<T>(new DynamicDriverContext(stageSpec, sec, collector), true)));
+    return wrap(stream.transform(new DynamicTransform<T>(
+      new DynamicDriverContext(stageSpec, sec, collector),
+      functionCacheFactory.newCache(),
+      true)));
   }
 
   @Override
@@ -125,20 +140,21 @@ public class DStreamCollection<T> implements SparkCollection<T> {
 
   @Override
   public <K, V> SparkPairCollection<K, V> flatMapToPair(PairFlatMapFunction<T, K, V> function) {
-    return new PairDStreamCollection<>(sec, stream.flatMapToPair(function));
+    return new PairDStreamCollection<>(sec, functionCacheFactory, stream.flatMapToPair(function));
   }
 
   @Override
   public SparkCollection<RecordInfo<Object>> aggregate(StageSpec stageSpec, @Nullable Integer partitions,
                                                        StageStatisticsCollector collector) {
     DynamicDriverContext dynamicDriverContext = new DynamicDriverContext(stageSpec, sec, collector);
-    JavaPairDStream<Object, T> keyedCollection =
-      stream.transformToPair(new DynamicAggregatorGroupBy<Object, T>(dynamicDriverContext));
+    JavaPairDStream<Object, T> keyedCollection = stream.transformToPair(
+      new DynamicAggregatorGroupBy<Object, T>(dynamicDriverContext, functionCacheFactory.newCache()));
 
     JavaPairDStream<Object, Iterable<T>> groupedCollection = partitions == null ?
       keyedCollection.groupByKey() : keyedCollection.groupByKey(partitions);
 
-    return wrap(groupedCollection.transform(new DynamicAggregatorAggregate<Object, T, Object>(dynamicDriverContext)));
+    return wrap(groupedCollection.transform(new DynamicAggregatorAggregate<Object, T, Object>(
+      dynamicDriverContext, functionCacheFactory.newCache())));
   }
 
   @Override
@@ -170,7 +186,7 @@ public class DStreamCollection<T> implements SparkCollection<T> {
     return new Runnable() {
       @Override
       public void run() {
-        Compat.foreachRDD(stream, new StreamingBatchSinkFunction<>(sec, stageSpec));
+        stream.foreachRDD(new StreamingBatchSinkFunction<T>(sec, stageSpec, functionCacheFactory.newCache()));
       }
     };
   }
@@ -181,8 +197,8 @@ public class DStreamCollection<T> implements SparkCollection<T> {
     return new Runnable() {
       @Override
       public void run() {
-        Compat.foreachRDD((JavaDStream<RecordInfo<Object>>) stream,
-                          new StreamingMultiSinkFunction(sec, phaseSpec, group, sinks, collectors));
+        ((JavaDStream<RecordInfo<Object>>) stream).foreachRDD(
+              new StreamingMultiSinkFunction(sec, phaseSpec, group, sinks, collectors));
       }
     };
   }
@@ -192,14 +208,14 @@ public class DStreamCollection<T> implements SparkCollection<T> {
     return new Runnable() {
       @Override
       public void run() {
-        Compat.foreachRDD(stream, new StreamingSparkSinkFunction<T>(sec, stageSpec));
+        stream.foreachRDD(new StreamingSparkSinkFunction<T>(sec, stageSpec));
       }
     };
   }
 
   @Override
   public void publishAlerts(StageSpec stageSpec, StageStatisticsCollector collector) throws Exception {
-    Compat.foreachRDD((JavaDStream<Alert>) stream, new StreamingAlertPublishFunction(sec, stageSpec));
+    ((JavaDStream<Alert>) stream).foreachRDD(new StreamingAlertPublishFunction(sec, stageSpec));
   }
 
   @Override
@@ -217,7 +233,13 @@ public class DStreamCollection<T> implements SparkCollection<T> {
     throw new UnsupportedOperationException("auto join not supported");
   }
 
+  @Override
+  public SparkCollection<T> join(JoinExpressionRequest joinRequest) {
+    // auto joins on arbitrary expressions are not supported in streaming, this should have been checked at deploy time
+    throw new UnsupportedOperationException("auto join not supported");
+  }
+
   private <U> SparkCollection<U> wrap(JavaDStream<U> stream) {
-    return new DStreamCollection<>(sec, stream);
+    return new DStreamCollection<>(sec, functionCacheFactory, stream);
   }
 }

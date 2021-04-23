@@ -31,7 +31,7 @@ import { PluginType } from 'components/Replicator/constants';
 import LoadingSVGCentered from 'components/LoadingSVGCentered';
 import uuidV4 from 'uuid/v4';
 import { MyReplicatorApi } from 'api/replicator';
-import { generateTableKey } from 'components/Replicator/utilities';
+import { generateTableKey, convertConfigToState } from 'components/Replicator/utilities';
 import { Map, Set, fromJS } from 'immutable';
 import { Observable } from 'rxjs/Observable';
 import {
@@ -77,7 +77,7 @@ interface ICreateProps extends WithStyles<typeof styles> {
   history;
 }
 
-interface ICreateState {
+export interface ICreateState {
   name: string;
   description: string;
   sourcePluginInfo: IPluginInfo;
@@ -109,13 +109,15 @@ interface ICreateState {
   setTargetPluginWidget: (targetPluginWidget: IWidgetJson) => void;
   setTargetConfig: (targetConfig: IPluginConfig) => void;
   setTables: (tables: ITablesStore, columns: IColumnsStore, dmlBlacklist: IDMLStore) => void;
-  setAdvanced: (offsetBasePath, numInstances) => void;
+  setAdvanced: (numInstances) => void;
   getReplicatorConfig: () => any;
   saveDraft: () => Observable<any>;
   setColumns: (columns, callback) => void;
+  isStateFilled: (stateKeys: string[]) => boolean;
 }
 
 export type ICreateContext = Partial<ICreateState>;
+export const CLONE_ID = 'cloneId';
 
 class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
   public setActiveStep = (step: number) => {
@@ -147,7 +149,7 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
 
   public setSourceConfig = (sourceConfig) => {
     this.setState({ sourceConfig }, () => {
-      this.props.history.push(
+      this.props.history.replace(
         `/ns/${getCurrentNamespace()}/replication/drafts/${this.state.draftId}`
       );
     });
@@ -173,8 +175,8 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
     this.setState({ tables, columns, dmlBlacklist });
   };
 
-  public setAdvanced = (offsetBasePath, numInstances) => {
-    this.setState({ offsetBasePath, numInstances });
+  public setAdvanced = (numInstances) => {
+    this.setState({ numInstances });
   };
 
   // for use in Assessment Table Mapping
@@ -242,6 +244,21 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
     return config;
   };
 
+  private isStateFilled = (stateKeys: string[]) => {
+    for (const stateKey of stateKeys) {
+      const stateObj = this.state[stateKey];
+      if (
+        !stateObj ||
+        (typeof stateObj === 'object' && Object.keys(stateObj).length === 0) ||
+        (Map.isMap(stateObj) && stateObj.size === 0)
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   public state = {
     name: '',
     description: '',
@@ -255,7 +272,7 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
     columns: Map() as IColumnsStore,
     dmlBlacklist: Map() as IDMLStore,
     offsetBasePath: window.CDAP_CONFIG.delta.defaultCheckpointDir || '',
-    numInstances: 1,
+    numInstances: null,
 
     parentArtifact: null,
     draftId: null,
@@ -277,6 +294,7 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
     getReplicatorConfig: this.getReplicatorConfig,
     saveDraft: this.saveDraft,
     setColumns: this.setColumns,
+    isStateFilled: this.isStateFilled,
   };
 
   public componentDidMount() {
@@ -284,6 +302,13 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
       this.setState({
         parentArtifact: appInfo.artifact,
       });
+
+      const queryParams = new URLSearchParams(location.search);
+      const cloneId = queryParams.get(CLONE_ID);
+      if (cloneId) {
+        this.initClone(cloneId);
+        return;
+      }
 
       const draftId = objectQuery(this.props, 'match', 'params', 'draftId');
       if (!draftId) {
@@ -299,6 +324,27 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
     this.setState({ draftId: uuidV4(), loading: false });
   };
 
+  private initClone = async (cloneId) => {
+    const pipelineConfigStr = window.localStorage.getItem(cloneId);
+    window.localStorage.removeItem(cloneId);
+
+    try {
+      const pipelineConfig = JSON.parse(pipelineConfigStr);
+      const stateObj = await convertConfigToState(pipelineConfig, this.state.parentArtifact);
+      const newState = {
+        ...stateObj,
+        draftId: uuidV4(),
+        activeStep: 0,
+      };
+
+      this.setState(newState);
+    } catch (e) {
+      // tslint:disable-next-line: no-console
+      console.log('Failed to parse replication config');
+      this.initCreate();
+    }
+  };
+
   private initDraft = (draftId) => {
     const params = {
       namespace: getCurrentNamespace(),
@@ -306,138 +352,12 @@ class CreateView extends React.PureComponent<ICreateProps, ICreateContext> {
     };
 
     MyReplicatorApi.getDraft(params).subscribe(async (res) => {
-      const newState: Partial<ICreateState> = {
+      const stateObj = await convertConfigToState(res, this.state.parentArtifact);
+
+      const newState = {
         draftId,
-        loading: false,
-        name: res.label,
-        description: objectQuery(res, 'config', 'description') || '',
-        activeStep: 1,
-        offsetBasePath: objectQuery(res, 'config', 'offsetBasePath') || '',
-        numInstances: objectQuery(res, 'config', 'parallelism', 'numInstances') || 1,
+        ...stateObj,
       };
-
-      const stages = objectQuery(res, 'config', 'stages') || [];
-
-      // SOURCE
-      const source = stages.find((stage) => {
-        const stageType = objectQuery(stage, 'plugin', 'type');
-        return stageType === PluginType.source;
-      });
-
-      if (source) {
-        const sourceArtifact = objectQuery(source, 'plugin', 'artifact') || {};
-
-        const sourcePluginInfo = await fetchPluginInfo(
-          this.state.parentArtifact,
-          sourceArtifact.name,
-          sourceArtifact.scope,
-          source.plugin.name,
-          source.plugin.type
-        ).toPromise();
-
-        newState.sourcePluginInfo = sourcePluginInfo;
-        newState.sourceConfig = objectQuery(source, 'plugin', 'properties') || {};
-
-        try {
-          const sourcePluginWidget = await fetchPluginWidget(
-            sourceArtifact.name,
-            sourceArtifact.version,
-            sourceArtifact.scope,
-            sourcePluginInfo.name,
-            sourcePluginInfo.type
-          ).toPromise();
-
-          newState.sourcePluginWidget = sourcePluginWidget;
-        } catch (e) {
-          // tslint:disable-next-line: no-console
-          console.log('Cannot fetch source plugin widget', e);
-          // no-op
-        }
-
-        if (Object.keys(newState.sourceConfig).length > 0) {
-          newState.activeStep = 2;
-        }
-      }
-
-      // TABLES & COLUMNS
-      const tables = objectQuery(res, 'config', 'tables');
-      if (tables) {
-        let selectedTables: ITablesStore = Map();
-
-        let columns: IColumnsStore = Map();
-        let dmlBlacklist: IDMLStore = Map();
-        tables.forEach((table) => {
-          const tableKey = generateTableKey(table);
-
-          const tableInfo: ITable = {
-            database: table.database,
-            table: table.table,
-          };
-
-          if (table.schema) {
-            tableInfo.schema = table.schema;
-          }
-
-          selectedTables = selectedTables.set(tableKey, fromJS(tableInfo));
-
-          const tableColumns = objectQuery(table, 'columns') || [];
-          const columnList = fromJS(tableColumns);
-
-          columns = columns.set(tableKey, columnList);
-
-          const tableDML = objectQuery(table, 'dmlBlacklist') || [];
-          dmlBlacklist = dmlBlacklist.set(tableKey, Set<DML>(tableDML));
-        });
-
-        newState.tables = selectedTables;
-        newState.columns = columns;
-        newState.dmlBlacklist = dmlBlacklist;
-
-        if (selectedTables.size > 0) {
-          newState.activeStep = 3;
-        }
-      }
-
-      // TARGET
-      const target = stages.find((stage) => {
-        const stageType = objectQuery(stage, 'plugin', 'type');
-        return stageType === PluginType.target;
-      });
-
-      if (target) {
-        const targetArtifact = objectQuery(target, 'plugin', 'artifact') || {};
-
-        const targetPluginInfo = await fetchPluginInfo(
-          this.state.parentArtifact,
-          targetArtifact.name,
-          targetArtifact.scope,
-          target.plugin.name,
-          target.plugin.type
-        ).toPromise();
-
-        newState.targetPluginInfo = targetPluginInfo;
-        newState.targetConfig = objectQuery(target, 'plugin', 'properties') || {};
-
-        try {
-          const targetPluginWidget = await fetchPluginWidget(
-            targetArtifact.name,
-            targetArtifact.version,
-            targetArtifact.scope,
-            targetPluginInfo.name,
-            targetPluginInfo.type
-          ).toPromise();
-
-          newState.targetPluginWidget = targetPluginWidget;
-        } catch (e) {
-          // tslint:disable-next-line: no-console
-          console.log('Cannot fetch target plugin widget', e);
-          // no-op
-        }
-
-        if (Object.keys(newState.targetConfig).length > 0) {
-          newState.activeStep = 5;
-        }
-      }
 
       this.setState(newState);
     });

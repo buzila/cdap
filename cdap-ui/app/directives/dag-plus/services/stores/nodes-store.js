@@ -37,10 +37,6 @@ class DAGPlusPlusNodesStore {
     dispatcher.register('onNodeUpdate', this.updateNode.bind(this));
     dispatcher.register('onResetPluginCount', this.resetPluginCount.bind(this));
     dispatcher.register('onSetCanvasPanning', this.setCanvasPanning.bind(this));
-    dispatcher.register('onAddComment', this.addComment.bind(this));
-    dispatcher.register('onSetComments', this.setComments.bind(this));
-    dispatcher.register('onDeleteComment', this.deleteComment.bind(this));
-    dispatcher.register('onUpdateComment', this.updateComment.bind(this));
     dispatcher.register('onUndoActions', this.undoActions.bind(this));
     dispatcher.register('onRedoActions', this.redoActions.bind(this));
     dispatcher.register('onRemovePreviousState', this.removePreviousState.bind(this));
@@ -51,7 +47,6 @@ class DAGPlusPlusNodesStore {
     let defaultState = {
       nodes: [],
       connections: [],
-      comments: [],
       activeNodeId: null,
       currentSourceCount: 0,
       currentTransformCount: 0,
@@ -126,11 +121,12 @@ class DAGPlusPlusNodesStore {
   }
 
   addNode(nodeConfig) {
+    const sanitize =  window.CaskCommon.CDAPHelpers.santizeStringForHTMLID;
     if (!nodeConfig.name) {
       nodeConfig.name = nodeConfig.plugin.label + '-' + this.uuid.v4();
     }
     if (!nodeConfig.id) {
-      nodeConfig.id = nodeConfig.plugin.label.replace(/[ \/]/g, '-') + '-' + this.uuid.v4();
+      nodeConfig.id = sanitize(nodeConfig.plugin.label) + '-' + this.uuid.v4();
     }
     this.addStateToHistory();
     switch (this.GLOBALS.pluginConvert[nodeConfig.type]) {
@@ -198,13 +194,14 @@ class DAGPlusPlusNodesStore {
   }
 
   setNodes(nodes) {
+    const sanitize =  window.CaskCommon.CDAPHelpers.santizeStringForHTMLID;
     this.adjacencyMap = {};
     nodes.forEach(node => {
       if (!node.name) {
         node.name = node.label + '-' + this.uuid.v4();
       }
       if (!node.id) {
-        node.id = node.name.replace(/[ \/]/g, '-');
+        node.id = sanitize(node.name);
       }
 
       if (!node.type) {
@@ -297,10 +294,9 @@ class DAGPlusPlusNodesStore {
     this.emitChange();
   }
 
-  setNodesAndConnections(nodes, connections, comments) {
+  setNodesAndConnections(nodes, connections) {
     this.setNodes(nodes);
     this.state.connections = connections;
-    this.state.comments = comments ? comments : [];
     this.adjacencyMap = {};
     nodes.forEach(node => {
       let nodeId = node;
@@ -320,41 +316,6 @@ class DAGPlusPlusNodesStore {
       this.adjacencyMap[sourceNodeId].push(targetNodeId);
     });
     this.emitChange();
-  }
-
-  addComment(comment) {
-    this.addStateToHistory();
-    this.state.comments.push(comment);
-    this.emitChange();
-  }
-
-  setComments(comments) {
-    this.state.comments = comments;
-    this.emitChange();
-  }
-
-  deleteComment(comment) {
-    this.addStateToHistory();
-    let index = this.state.comments.indexOf(comment);
-    if (index > -1) {
-      this.state.comments.splice(index, 1);
-      this.emitChange();
-    }
-  }
-
-  updateComment(commentId, config) {
-    let matchComment = this.state.comments.filter( comment => comment.id === commentId);
-    if (!matchComment.length) {
-      return;
-    }
-    this.addStateToHistory();
-    matchComment = matchComment[0];
-    angular.extend(matchComment, config);
-    this.emitChange();
-  }
-
-  getComments() {
-    return this.state.comments;
   }
 
   setState(state) {

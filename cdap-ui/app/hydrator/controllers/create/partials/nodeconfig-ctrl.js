@@ -15,7 +15,32 @@
  */
 
 class HydratorPlusPlusNodeConfigCtrl {
-  constructor($scope, $timeout, $state, HydratorPlusPlusPluginConfigFactory, EventPipe, GLOBALS, HydratorPlusPlusConfigActions, myHelpers, NonStorePipelineErrorFactory, $uibModal, HydratorPlusPlusConfigStore, rPlugin, rDisabled, HydratorPlusPlusHydratorService, myPipelineApi, HydratorPlusPlusPreviewStore, rIsStudioMode, HydratorPlusPlusOrderingFactory, avsc, DAGPlusPlusNodesActionsFactory, rNodeMetricsContext, HydratorPlusPlusNodeService, HydratorPlusPlusPreviewActions, myAlertOnValium) {
+  constructor($scope,
+    $timeout,
+    $state,
+    HydratorPlusPlusPluginConfigFactory,
+    EventPipe,
+    GLOBALS,
+    HydratorPlusPlusConfigActions,
+    myHelpers,
+    NonStorePipelineErrorFactory,
+    $uibModal,
+    HydratorPlusPlusConfigStore,
+    rPlugin,
+    rDisabled,
+    HydratorPlusPlusHydratorService,
+    myPipelineApi,
+    HydratorPlusPlusPreviewStore,
+    rIsStudioMode,
+    HydratorPlusPlusOrderingFactory,
+    avsc,
+    DAGPlusPlusNodesActionsFactory,
+    rNodeMetricsContext,
+    HydratorPlusPlusNodeService,
+    HydratorPlusPlusPreviewActions,
+    myAlertOnValium,
+    HydratorPlusPlusCanvasFactory
+  ) {
     'ngInject';
     this.$scope = $scope;
     this.$timeout = $timeout;
@@ -48,6 +73,7 @@ class HydratorPlusPlusNodeConfigCtrl {
     this.metricsContext = rNodeMetricsContext;
     this.isStudioMode = rIsStudioMode;
     this.rPlugin = rPlugin;
+    this.HydratorPlusPlusCanvasFactory = HydratorPlusPlusCanvasFactory;
     this.validatePluginProperties = this.validatePluginProperties.bind(this);
     this.getPreviewId = this.getPreviewId.bind(this);
     this.previewId = this.getPreviewId();
@@ -66,6 +92,7 @@ class HydratorPlusPlusNodeConfigCtrl {
     this.initializeMetrics = this.initializeMetrics.bind(this);
     this.showContents = this.showContents.bind(this);
     this.initializePreview = this.initializePreview.bind(this);
+    this.setComments = this.setComments.bind(this);
     this.tabs = [
       {
         label: 'Properties',
@@ -140,6 +167,13 @@ class HydratorPlusPlusNodeConfigCtrl {
             isAction: this.GLOBALS.pluginConvert[pluginType] === 'action',
             isCondition: this.GLOBALS.pluginConvert[pluginType] === 'condition',
           });
+        }, (err) => {
+          if (err && err.statusCode === 404) {
+            // This is when plugin artifact is unavailable. Show appropriate message.
+            this.state.configfetched = true;
+            this.state.noproperty = 0;
+            this.state.isValidPlugin = false;
+          }
         });
   }
 
@@ -252,6 +286,7 @@ class HydratorPlusPlusNodeConfigCtrl {
       this.previewData = null;
       this.updatePreviewStatus();
       this.selectedNode = {
+        nodeType: this.state.node.type,
         name: this.state.node.plugin.label,
         plugin: this.state.node.plugin,
         isSource: this.state.isSource,
@@ -521,10 +556,16 @@ class HydratorPlusPlusNodeConfigCtrl {
   }
 
   validatePluginProperties(callback, validationFromGetSchema) {
-    const nodeInfo = this.state.node;
+    const nodeInfo = this.HydratorPlusPlusCanvasFactory.pruneProperties({
+      stages: [angular.copy(this.state.node)]
+    }).stages[0];
     let vm = this;
+    vm.propertyErrors = {};
+    vm.inputSchemaErrors = {};
+    vm.outputSchemaErrors = {};
     if(!validationFromGetSchema){
       vm.validating = true;
+      vm.errorCount = undefined;
     }
     const errorCb = ({ errorCount, propertyErrors, inputSchemaErrors, outputSchemaErrors }) => {
       // errorCount can be 0, a positive integer, or undefined (in case of an error thrown)
@@ -551,7 +592,7 @@ class HydratorPlusPlusNodeConfigCtrl {
         callback();
       }
     };
-    this.HydratorPlusPlusPluginConfigFactory.validatePluginProperties(nodeInfo, this.state.config, errorCb);
+    this.HydratorPlusPlusPluginConfigFactory.validatePluginProperties(nodeInfo, this.state.config, errorCb, validationFromGetSchema);
   }
 
   // MACRO ENABLED SCHEMA
@@ -786,6 +827,11 @@ class HydratorPlusPlusNodeConfigCtrl {
       },
     });
     return actionsMap;
+  }
+
+  setComments(nodeId, comments) {
+    this.state.node.information = this.state.node.information || {};
+    this.state.node.information.comments = { list: comments };
   }
 }
 

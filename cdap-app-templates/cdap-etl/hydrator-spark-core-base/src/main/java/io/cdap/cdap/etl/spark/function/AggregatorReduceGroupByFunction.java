@@ -23,7 +23,10 @@ import io.cdap.cdap.etl.common.Constants;
 import io.cdap.cdap.etl.common.DefaultEmitter;
 import io.cdap.cdap.etl.common.NoErrorEmitter;
 import io.cdap.cdap.etl.common.TrackedTransform;
+import org.apache.spark.api.java.function.PairFlatMapFunction;
 import scala.Tuple2;
+
+import java.util.Iterator;
 
 /**
  * Function that uses a BatchReduceAggregator to perform the groupBy part of the aggregator.
@@ -33,20 +36,22 @@ import scala.Tuple2;
  * @param <GROUP_VAL> type of group val
  */
 public class AggregatorReduceGroupByFunction<GROUP_KEY, GROUP_VAL>
-  implements PairFlatMapFunc<GROUP_VAL, GROUP_KEY, GROUP_VAL> {
+  implements PairFlatMapFunction<GROUP_VAL, GROUP_KEY, GROUP_VAL> {
   private final PluginFunctionContext pluginFunctionContext;
+  private final FunctionCache functionCache;
   private transient TrackedTransform<GROUP_VAL, Tuple2<GROUP_KEY, GROUP_VAL>> groupByFunction;
   private transient DefaultEmitter<Tuple2<GROUP_KEY, GROUP_VAL>> emitter;
 
-  public AggregatorReduceGroupByFunction(PluginFunctionContext pluginFunctionContext) {
+  public AggregatorReduceGroupByFunction(PluginFunctionContext pluginFunctionContext, FunctionCache functionCache) {
     this.pluginFunctionContext = pluginFunctionContext;
+    this.functionCache = functionCache;
   }
 
   @Override
-  public Iterable<Tuple2<GROUP_KEY, GROUP_VAL>> call(GROUP_VAL input) throws Exception {
+  public Iterator<Tuple2<GROUP_KEY, GROUP_VAL>> call(GROUP_VAL input) throws Exception {
     if (groupByFunction == null) {
-      BatchReducibleAggregator<GROUP_KEY, GROUP_VAL, ?, ?> aggregator = pluginFunctionContext.createPlugin();
-      aggregator.initialize(pluginFunctionContext.createBatchRuntimeContext());
+      BatchReducibleAggregator<GROUP_KEY, GROUP_VAL, ?, ?> aggregator =
+        pluginFunctionContext.createAndInitializePlugin(functionCache);
       groupByFunction = new TrackedTransform<>(new GroupByTransform<>(aggregator),
                                                pluginFunctionContext.createStageMetrics(),
                                                Constants.Metrics.RECORDS_IN,
@@ -56,7 +61,7 @@ public class AggregatorReduceGroupByFunction<GROUP_KEY, GROUP_VAL>
     }
     emitter.reset();
     groupByFunction.transform(input, emitter);
-    return emitter.getEntries();
+    return emitter.getEntries().iterator();
   }
 
   private static class GroupByTransform<GROUP_KEY, GROUP_VAL>

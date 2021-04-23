@@ -22,22 +22,26 @@ import com.google.gson.JsonObject;
 import io.cdap.cdap.AllProgramsApp;
 import io.cdap.cdap.CapabilityAppWithWorkflow;
 import io.cdap.cdap.CapabilitySleepingWorkflowApp;
+import io.cdap.cdap.CapabilitySleepingWorkflowPluginApp;
 import io.cdap.cdap.WorkflowAppWithFork;
 import io.cdap.cdap.api.annotation.Requirements;
 import io.cdap.cdap.api.artifact.ArtifactScope;
 import io.cdap.cdap.api.artifact.ArtifactSummary;
+import io.cdap.cdap.app.program.ManifestFields;
 import io.cdap.cdap.app.program.ProgramDescriptor;
 import io.cdap.cdap.common.conf.CConfiguration;
 import io.cdap.cdap.common.conf.Constants;
 import io.cdap.cdap.common.id.Id;
 import io.cdap.cdap.common.io.Locations;
 import io.cdap.cdap.common.test.AppJarHelper;
+import io.cdap.cdap.common.test.PluginJarHelper;
 import io.cdap.cdap.internal.AppFabricTestHelper;
 import io.cdap.cdap.internal.app.deploy.pipeline.ApplicationWithPrograms;
 import io.cdap.cdap.internal.app.runtime.artifact.ArtifactRepository;
 import io.cdap.cdap.internal.app.services.ApplicationLifecycleService;
 import io.cdap.cdap.internal.app.services.ProgramLifecycleService;
 import io.cdap.cdap.internal.app.services.http.AppFabricTestBase;
+import io.cdap.cdap.proto.ApplicationDetail;
 import io.cdap.cdap.proto.ProgramRunStatus;
 import io.cdap.cdap.proto.ProgramType;
 import io.cdap.cdap.proto.id.ApplicationId;
@@ -46,6 +50,7 @@ import io.cdap.cdap.proto.id.ProgramId;
 import io.cdap.cdap.spi.data.transaction.TransactionRunner;
 import org.apache.twill.filesystem.Location;
 import org.apache.twill.filesystem.LocationFactory;
+import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -61,6 +66,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 
 /**
@@ -86,11 +92,31 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     capabilityStatusStore = new CapabilityStatusStore(getInjector().getInstance(TransactionRunner.class));
     applicationLifecycleService = getInjector().getInstance(ApplicationLifecycleService.class);
     programLifecycleService = getInjector().getInstance(ProgramLifecycleService.class);
+    capabilityManagementService.stopAndWait();
   }
 
   @AfterClass
   public static void stop() {
     AppFabricTestHelper.shutdown();
+  }
+
+  @After
+  public void reset() throws Exception {
+    // Reset all relevant stores.
+    for (ApplicationDetail appDetail : applicationLifecycleService
+      .getApps(NamespaceId.SYSTEM, applicationDetail -> true)) {
+      programLifecycleService.stopAll(
+        new ApplicationId(NamespaceId.SYSTEM.getNamespace(), appDetail.getName(), appDetail.getAppVersion()));
+    }
+    for (ApplicationDetail appDetail : applicationLifecycleService
+      .getApps(NamespaceId.DEFAULT, applicationDetail -> true)) {
+      programLifecycleService.stopAll(
+        new ApplicationId(NamespaceId.DEFAULT.getNamespace(), appDetail.getName(), appDetail.getAppVersion()));
+    }
+    applicationLifecycleService.removeAll(NamespaceId.SYSTEM);
+    applicationLifecycleService.removeAll(NamespaceId.DEFAULT);
+    artifactRepository.clear(NamespaceId.SYSTEM);
+    artifactRepository.clear(NamespaceId.DEFAULT);
   }
 
   @Test
@@ -114,6 +140,9 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     capabilityManagementService.runTask();
     List<JsonObject> appList = getAppList(namespace);
     Assert.assertFalse(appList.isEmpty());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
     assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
 
     //remove the file and make sure it gets removed
@@ -143,7 +172,8 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     CapabilityConfig disableConfig = new CapabilityConfig(capabilityConfig.getLabel(), CapabilityStatus.DISABLED,
                                                           capabilityConfig.getCapability(),
                                                           capabilityConfig.getApplications(),
-                                                          capabilityConfig.getPrograms());
+                                                          capabilityConfig.getPrograms(),
+                                                          capabilityConfig.getHubs());
     writeConfigAsFile(externalConfigPath, fileName, disableConfig);
     capabilityManagementService.runTask();
     try {
@@ -158,12 +188,14 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     writeConfigAsFile(externalConfigPath, fileName, capabilityConfig);
     capabilityManagementService.runTask();
     capabilityStatusStore.checkAllEnabled(Collections.singleton("cap1"));
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
     assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
 
     //cleanup
     new File(externalConfigPath, fileName).delete();
     capabilityManagementService.runTask();
-    artifactRepository.deleteArtifact(Id.Artifact.from(new Id.Namespace(namespace), appName, version));
   }
 
   private void writeConfigAsFile(String externalConfigPath, String fileName,
@@ -193,12 +225,15 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     Assert.assertTrue(appList.isEmpty());
 
     //enable the capability
-    CapabilityConfig config = getTestConfig();
+    CapabilityConfig config = getTestConfig("1.0.0");
     writeConfigAsFile(externalConfigPath, config.getCapability(), config);
     capabilityManagementService.runTask();
     //app should show up and program should have run
     appList = getAppList(namespace);
     Assert.assertFalse(appList.isEmpty());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
     assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
     String capability = config.getCapability();
     capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
@@ -224,8 +259,187 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     Assert.assertTrue(capabilityStatusStore.getConfigs(Collections.singleton(capability)).isEmpty());
     appList = getAppList(namespace);
     Assert.assertTrue(appList.isEmpty());
-    artifactRepository.deleteArtifact(Id.Artifact
-                                        .from(new Id.Namespace("system"), appName, version));
+  }
+
+  @Test
+  public void testCapabilityRefreshWithNewArtifact() throws Exception {
+    String externalConfigPath = tmpFolder.newFolder("capability-config-refresh-redeploy").getAbsolutePath();
+    cConfiguration.set(Constants.Capability.CONFIG_DIR, externalConfigPath);
+
+    String appName = AllProgramsApp.NAME;
+    String programName = AllProgramsApp.NoOpService.NAME;
+    Class<AllProgramsApp> appClass = AllProgramsApp.class;
+    String appVersion = "1.0.0";
+    String namespace = NamespaceId.SYSTEM.getNamespace();
+    //deploy the artifact with older version.
+    String oldArtifactVersion = "1.0.0";
+    deployTestArtifact(namespace, appName, oldArtifactVersion, appClass);
+
+    ApplicationId applicationId = new ApplicationId(namespace, appName, appVersion);
+    ProgramId programId = new ProgramId(applicationId, ProgramType.SERVICE, programName);
+    //check that app is not available
+    List<JsonObject> appList = getAppList(namespace);
+    Assert.assertTrue(appList.isEmpty());
+
+    //enable the capability
+    CapabilityConfig config = getTestConfig(oldArtifactVersion);
+    writeConfigAsFile(externalConfigPath, config.getCapability(), config);
+    capabilityManagementService.runTask();
+    //app should show up and program should have run
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
+    String capability = config.getCapability();
+    capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+
+    //disable capability. Program should stop, status should be disabled and app should still be present.
+    CapabilityConfig disabledConfig = changeConfigStatus(config, CapabilityStatus.DISABLED);
+    writeConfigAsFile(externalConfigPath, disabledConfig.getCapability(), disabledConfig);
+    capabilityManagementService.runTask();
+    assertProgramRuns(programId, ProgramRunStatus.KILLED, 1);
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 0);
+    try {
+      capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+      Assert.fail("expecting exception");
+    } catch (CapabilityNotAvailableException ex) {
+
+    }
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+
+    String newArtifactVersion = "2.0.0";
+    //deploy the new artifact.
+    deployTestArtifact(namespace, appName, newArtifactVersion, appClass);
+    //enable the capability again.
+    config = getTestConfig(newArtifactVersion);
+    writeConfigAsFile(externalConfigPath, config.getCapability(), config);
+    capabilityManagementService.runTask();
+    //app should show up with newer artifact and program should have run.
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+    // Verify that application is redeployed with newer artifact.
+    Assert.assertEquals(newArtifactVersion,
+                        appList.get(0).get("artifact").getAsJsonObject().get("version").getAsString());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
+    capability = config.getCapability();
+    capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+
+    //disable capability again. Program should stop, status should be disabled and app should still be present.
+    disabledConfig = changeConfigStatus(config, CapabilityStatus.DISABLED);
+    writeConfigAsFile(externalConfigPath, disabledConfig.getCapability(), disabledConfig);
+    capabilityManagementService.runTask();
+    assertProgramRuns(programId, ProgramRunStatus.KILLED, 1);
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 0);
+    try {
+      capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+      Assert.fail("expecting exception");
+    } catch (CapabilityNotAvailableException ex) {
+
+    }
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+
+    //delete capability. Program should stop, status should be disabled and app should still be present.
+    new File(externalConfigPath, disabledConfig.getCapability()).delete();
+    capabilityManagementService.runTask();
+    Assert.assertTrue(capabilityStatusStore.getConfigs(Collections.singleton(capability)).isEmpty());
+    appList = getAppList(namespace);
+    Assert.assertTrue(appList.isEmpty());
+  }
+
+  @Test
+  public void testCapabilityRefreshWithSameArtifact() throws Exception {
+    String externalConfigPath = tmpFolder.newFolder("capability-config-refresh-redeploy-same").getAbsolutePath();
+    cConfiguration.set(Constants.Capability.CONFIG_DIR, externalConfigPath);
+
+    String appName = AllProgramsApp.NAME;
+    String programName = AllProgramsApp.NoOpService.NAME;
+    Class<AllProgramsApp> appClass = AllProgramsApp.class;
+    String appVersion = "1.0.0";
+    String namespace = NamespaceId.SYSTEM.getNamespace();
+    //deploy the artifact with older version.
+    String artifactVersion = "1.0.0";
+    deployTestArtifact(namespace, appName, artifactVersion, appClass);
+
+    ApplicationId applicationId = new ApplicationId(namespace, appName, appVersion);
+    ProgramId programId = new ProgramId(applicationId, ProgramType.SERVICE, programName);
+    //check that app is not available
+    List<JsonObject> appList = getAppList(namespace);
+    Assert.assertTrue(appList.isEmpty());
+
+    //enable the capability
+    CapabilityConfig config = getTestConfig(artifactVersion);
+    writeConfigAsFile(externalConfigPath, config.getCapability(), config);
+    capabilityManagementService.runTask();
+    //app should show up and program should have run
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
+    String capability = config.getCapability();
+    capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+
+    //disable capability. Program should stop, status should be disabled and app should still be present.
+    CapabilityConfig disabledConfig = changeConfigStatus(config, CapabilityStatus.DISABLED);
+    writeConfigAsFile(externalConfigPath, disabledConfig.getCapability(), disabledConfig);
+    capabilityManagementService.runTask();
+    assertProgramRuns(programId, ProgramRunStatus.KILLED, 1);
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 0);
+    try {
+      capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+      Assert.fail("expecting exception");
+    } catch (CapabilityNotAvailableException ex) {
+
+    }
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+
+    //enable the capability again but with same artifact.
+    config = getTestConfig(artifactVersion);
+    writeConfigAsFile(externalConfigPath, config.getCapability(), config);
+    capabilityManagementService.runTask();
+    //app should show up with newer artifact and program should have run.
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+    // Verify that application is still same as before.
+    Assert.assertEquals(artifactVersion,
+                        appList.get(0).get("artifact").getAsJsonObject().get("version").getAsString());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
+    capability = config.getCapability();
+    capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+
+    //disable capability again. Program should stop, status should be disabled and app should still be present.
+    disabledConfig = changeConfigStatus(config, CapabilityStatus.DISABLED);
+    writeConfigAsFile(externalConfigPath, disabledConfig.getCapability(), disabledConfig);
+    capabilityManagementService.runTask();
+    assertProgramRuns(programId, ProgramRunStatus.KILLED, 1);
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 0);
+    try {
+      capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+      Assert.fail("expecting exception");
+    } catch (CapabilityNotAvailableException ex) {
+
+    }
+    appList = getAppList(namespace);
+    Assert.assertFalse(appList.isEmpty());
+
+    //delete capability. Program should stop, status should be disabled and app should still be present.
+    new File(externalConfigPath, disabledConfig.getCapability()).delete();
+    capabilityManagementService.runTask();
+    Assert.assertTrue(capabilityStatusStore.getConfigs(Collections.singleton(capability)).isEmpty());
+    appList = getAppList(namespace);
+    Assert.assertTrue(appList.isEmpty());
   }
 
   @Test
@@ -270,7 +484,8 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     //enable the capabilities
     List<CapabilityConfig> capabilityConfigs = Arrays.stream(declaredAnnotation.capabilities())
       .map(capability -> new CapabilityConfig("Test capability", CapabilityStatus.ENABLED, capability,
-                                              Collections.emptyList(), Collections.emptyList()))
+                                              Collections.emptyList(), Collections.emptyList(),
+                                              Collections.emptyList()))
       .collect(Collectors.toList());
     for (CapabilityConfig capabilityConfig : capabilityConfigs) {
       writeConfigAsFile(externalConfigPath, capabilityConfig.getCapability(), capabilityConfig);
@@ -314,7 +529,7 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     //enable a capability with no system apps and programs
     CapabilityConfig enabledConfig = new CapabilityConfig("Enable healthcare", CapabilityStatus.ENABLED,
                                                           "healthcare", Collections.emptyList(),
-                                                          Collections.emptyList());
+                                                          Collections.emptyList(), Collections.emptyList());
     writeConfigAsFile(externalConfigPath, enabledConfig.getCapability(), enabledConfig);
     capabilityManagementService.runTask();
     String capability = enabledConfig.getCapability();
@@ -333,12 +548,15 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     }
     ProgramId programId = new ProgramId(applicationId, ProgramType.WORKFLOW,
                                         CapabilitySleepingWorkflowApp.SleepWorkflow.class.getSimpleName());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
     assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
 
     //disable the capability -  the program that was started should stop
     CapabilityConfig disabledConfig = new CapabilityConfig("Disable healthcare", CapabilityStatus.DISABLED,
                                                            "healthcare", Collections.emptyList(),
-                                                           Collections.emptyList());
+                                                           Collections.emptyList(), Collections.emptyList());
     writeConfigAsFile(externalConfigPath, capability, disabledConfig);
     capabilityManagementService.runTask();
     assertProgramRuns(programId, ProgramRunStatus.KILLED, 1);
@@ -354,6 +572,7 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     for (ProgramDescriptor program : programs) {
       try {
         programLifecycleService.start(program.getProgramId(), new HashMap<>(), false);
+        Assert.fail("expecting exception");
       } catch (CapabilityNotAvailableException ex) {
         //expecting exception
       }
@@ -361,8 +580,86 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     new File(externalConfigPath, capability).delete();
     capabilityManagementService.runTask();
     Assert.assertTrue(capabilityStatusStore.getConfigs(Collections.singleton(capability)).isEmpty());
-    artifactRepository.deleteArtifact(Id.Artifact
-                                        .from(new Id.Namespace(namespace), appName, version));
+  }
+
+  @Test
+  public void testProgramWithPluginStart() throws Exception {
+    String externalConfigPath = tmpFolder.newFolder("capability-config-program-plugin").getAbsolutePath();
+    cConfiguration.set(Constants.Capability.CONFIG_DIR, externalConfigPath);
+    String appName = CapabilitySleepingWorkflowPluginApp.NAME;
+    Class<CapabilitySleepingWorkflowPluginApp> appClass = CapabilitySleepingWorkflowPluginApp.class;
+    String version = "1.0.0";
+    String namespace = "default";
+    //deploy the artifact
+    deployTestArtifact(namespace, appName, version, appClass);
+
+    //deploy the plugin artifact
+    Manifest manifest = new Manifest();
+    String pluginName = CapabilitySleepingWorkflowPluginApp.SimplePlugin.class.getPackage().getName();
+    manifest.getMainAttributes().put(ManifestFields.EXPORT_PACKAGE, pluginName);
+    Location pluginJar = PluginJarHelper
+      .createPluginJar(locationFactory, manifest, CapabilitySleepingWorkflowPluginApp.SimplePlugin.class);
+    Id.Artifact pluginArtifactId = Id.Artifact.from(Id.Namespace.from(namespace), pluginName, version);
+    File pluginJarFile = new File(tmpFolder.newFolder(),
+                                  String.format("%s-%s.jar", pluginArtifactId.getName(), version));
+    Locations.linkOrCopyOverwrite(pluginJar, pluginJarFile);
+    pluginJar.delete();
+    artifactRepository.addArtifact(pluginArtifactId, pluginJarFile);
+
+    //enable a capability with no system apps and programs
+    CapabilityConfig enabledConfig = new CapabilityConfig("Enable healthcare", CapabilityStatus.ENABLED,
+                                                          "healthcare", Collections.emptyList(),
+                                                          Collections.emptyList(), Collections.emptyList());
+    writeConfigAsFile(externalConfigPath, enabledConfig.getCapability(), enabledConfig);
+    capabilityManagementService.runTask();
+    String capability = enabledConfig.getCapability();
+    capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+
+    //deploy an app with this capability and start a workflow
+    ApplicationId applicationId = new ApplicationId(namespace, appName);
+    Id.Artifact artifactId = Id.Artifact
+      .from(new Id.Namespace(namespace), appName, version);
+    ApplicationWithPrograms applicationWithPrograms = applicationLifecycleService
+      .deployApp(new NamespaceId(namespace), appName, null, artifactId, null, op -> {
+      });
+    Iterable<ProgramDescriptor> programs = applicationWithPrograms.getPrograms();
+    for (ProgramDescriptor program : programs) {
+      programLifecycleService.start(program.getProgramId(), new HashMap<>(), false);
+    }
+    ProgramId programId = new ProgramId(applicationId, ProgramType.WORKFLOW,
+                                        CapabilitySleepingWorkflowPluginApp.SleepWorkflow.class.getSimpleName());
+    // Capability management service might not yet have deployed application.
+    // So wait till program exists and is in running state.
+    waitState(programId, "RUNNING");
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 1);
+
+    //disable the capability -  the program that was started should stop
+    CapabilityConfig disabledConfig = new CapabilityConfig("Disable healthcare", CapabilityStatus.DISABLED,
+                                                           "healthcare", Collections.emptyList(),
+                                                           Collections.emptyList(), Collections.emptyList());
+    writeConfigAsFile(externalConfigPath, capability, disabledConfig);
+    capabilityManagementService.runTask();
+    assertProgramRuns(programId, ProgramRunStatus.KILLED, 1);
+    assertProgramRuns(programId, ProgramRunStatus.RUNNING, 0);
+    try {
+      capabilityStatusStore.checkAllEnabled(Collections.singleton(capability));
+      Assert.fail("expecting exception");
+    } catch (CapabilityNotAvailableException ex) {
+
+    }
+
+    //try starting programs
+    for (ProgramDescriptor program : programs) {
+      try {
+        programLifecycleService.start(program.getProgramId(), new HashMap<>(), false);
+        Assert.fail("expecting exception");
+      } catch (CapabilityNotAvailableException ex) {
+        //expecting exception
+      }
+    }
+    new File(externalConfigPath, capability).delete();
+    capabilityManagementService.runTask();
+    Assert.assertTrue(capabilityStatusStore.getConfigs(Collections.singleton(capability)).isEmpty());
   }
 
   @Test
@@ -370,8 +667,10 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     String testCapability1 = "cap1";
     String testCapability2 = "cap2";
     String testCapability3 = "cap3";
-    capabilityStatusStore.addOrUpdateCapability(testCapability1, CapabilityStatus.ENABLED, getTestConfig());
-    capabilityStatusStore.addOrUpdateCapability(testCapability2, CapabilityStatus.DISABLED, getTestConfig());
+    capabilityStatusStore.addOrUpdateCapability(testCapability1, CapabilityStatus.ENABLED, getTestConfig(
+      "1.0.0"));
+    capabilityStatusStore.addOrUpdateCapability(testCapability2, CapabilityStatus.DISABLED, getTestConfig(
+      "1.0.0"));
     try {
       capabilityStatusStore.checkAllEnabled(Collections.singleton(testCapability2));
       Assert.fail("expecting exception");
@@ -415,8 +714,10 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
   public void testGetConfigs() throws IOException {
     String testCapability1 = "cap1";
     String testCapability2 = "cap2";
-    capabilityStatusStore.addOrUpdateCapability(testCapability1, CapabilityStatus.ENABLED, getTestConfig());
-    capabilityStatusStore.addOrUpdateCapability(testCapability2, CapabilityStatus.DISABLED, getTestConfig());
+    capabilityStatusStore.addOrUpdateCapability(testCapability1, CapabilityStatus.ENABLED, getTestConfig(
+      "1.0.0"));
+    capabilityStatusStore.addOrUpdateCapability(testCapability2, CapabilityStatus.DISABLED, getTestConfig(
+      "1.0.0"));
     Map<String, CapabilityConfig> configs = capabilityStatusStore
       .getConfigs(Arrays.asList(new String[]{testCapability1, testCapability2}));
     Assert.assertNotNull(configs.get(testCapability1));
@@ -431,10 +732,14 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     String testCapability1 = "cap1";
     String testCapability2 = "cap2";
     String testCapability3 = "cap3";
-    capabilityStatusStore.addOrUpdateCapability(testCapability1, CapabilityStatus.ENABLED, getTestConfig());
-    capabilityStatusStore.addOrUpdateCapability(testCapability2, CapabilityStatus.DISABLED, getTestConfig());
-    capabilityStatusStore.addOrUpdateCapabilityOperation(testCapability1, CapabilityAction.ENABLE, getTestConfig());
-    capabilityStatusStore.addOrUpdateCapabilityOperation(testCapability3, CapabilityAction.DELETE, getTestConfig());
+    capabilityStatusStore.addOrUpdateCapability(testCapability1, CapabilityStatus.ENABLED, getTestConfig(
+      "1.0.0"));
+    capabilityStatusStore.addOrUpdateCapability(testCapability2, CapabilityStatus.DISABLED, getTestConfig(
+      "1.0.0"));
+    capabilityStatusStore.addOrUpdateCapabilityOperation(testCapability1, CapabilityAction.ENABLE, getTestConfig(
+      "1.0.0"));
+    capabilityStatusStore.addOrUpdateCapabilityOperation(testCapability3, CapabilityAction.DELETE, getTestConfig(
+      "1.0.0"));
     Map<String, CapabilityRecord> capabilityRecords = capabilityStatusStore.getCapabilityRecords();
     CapabilityRecord capabilityRecord = capabilityRecords.get(testCapability1);
     Assert.assertNotNull(capabilityRecord.getCapabilityOperationRecord());
@@ -454,22 +759,23 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
 
   private CapabilityConfig changeConfigStatus(CapabilityConfig original, CapabilityStatus status) {
     return new CapabilityConfig(original.getLabel(), status, original.getCapability(), original.getApplications(),
-                                original.getPrograms());
+                                original.getPrograms(), original.getHubs());
   }
 
-  private CapabilityConfig getTestConfig() {
+  private CapabilityConfig getTestConfig(String artifactVersion) {
     String appName = AllProgramsApp.NAME;
     String programName = AllProgramsApp.NoOpService.NAME;
-    String version = "1.0.0";
+    String appVersion = "1.0.0";
     String namespace = NamespaceId.SYSTEM.getNamespace();
     String label = "Enable capability";
     String capability = "test";
-    ArtifactSummary artifactSummary = new ArtifactSummary(appName, version, ArtifactScope.SYSTEM);
-    SystemApplication application = new SystemApplication(namespace, appName, version, artifactSummary, null);
+    ArtifactSummary artifactSummary = new ArtifactSummary(appName, artifactVersion, ArtifactScope.SYSTEM);
+    SystemApplication application = new SystemApplication(namespace, appName, appVersion, artifactSummary, null);
     SystemProgram program = new SystemProgram(namespace, appName, ProgramType.SERVICE.name(),
-                                              programName, version, null);
+                                              programName, appVersion, null);
     return new CapabilityConfig(label, CapabilityStatus.ENABLED, capability,
-                                Collections.singletonList(application), Collections.singletonList(program));
+                                Collections.singletonList(application), Collections.singletonList(program),
+                                Collections.emptyList());
   }
 
   void deployTestArtifact(String namespace, String appName, String version, Class<?> appClass) throws Exception {
@@ -477,7 +783,7 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     Location appJar = AppJarHelper.createDeploymentJar(locationFactory, appClass);
     File appJarFile = new File(tmpFolder.newFolder(),
                                String.format("%s-%s.jar", artifactId.getName(), artifactId.getVersion().getVersion()));
-    Files.copy(Locations.newInputSupplier(appJar), appJarFile);
+    Locations.linkOrCopyOverwrite(appJar, appJarFile);
     appJar.delete();
     artifactRepository.addArtifact(artifactId, appJarFile);
   }
@@ -487,7 +793,7 @@ public class CapabilityManagementServiceTest extends AppFabricTestBase {
     Location appJar = AppJarHelper.createDeploymentJar(locationFactory, applicationClass);
     File appJarFile = new File(tmpFolder.newFolder(),
                                String.format("%s-%s.jar", artifactId.getName(), artifactId.getVersion().getVersion()));
-    Files.copy(Locations.newInputSupplier(appJar), appJarFile);
+    Locations.linkOrCopyOverwrite(appJar, appJarFile);
     appJar.delete();
     artifactRepository.addArtifact(artifactId, appJarFile);
     //deploy app

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2016-2017 Cask Data, Inc.
+ * Copyright © 2016-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -66,6 +66,38 @@ public class DefaultAuthorizationEnforcer extends AbstractAuthorizationEnforcer 
       return;
     }
     doEnforce(entity, principal, Collections.singleton(action));
+  }
+
+  @Override
+  public void enforce(EntityId entity, Principal principal, Set<Action> actions) throws Exception {
+    if (!isSecurityAuthorizationEnabled()) {
+      return;
+    }
+    doEnforce(entity, principal, actions);
+  }
+
+  @Override
+  public void isVisible(EntityId entity, Principal principal) throws Exception {
+    if (!isSecurityAuthorizationEnabled()) {
+      return;
+    }
+    if (isAccessingSystemNSAsMasterUser(entity, principal) || isEnforcingOnSamePrincipalId(entity, principal)) {
+      return;
+    }
+
+    LOG.trace("Checking single entity visibility on {} for principal {}.", entity, principal);
+    long startTime = System.nanoTime();
+    try {
+      authorizerInstantiator.get().isVisible(entity, principal);
+    } finally {
+      long timeTaken = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+      String logLine = "Checked single entity visibility on {} for principal {}. Time spent in enforcement was {} ms.";
+      if (timeTaken > logTimeTakenAsWarn) {
+        LOG.warn(logLine, entity, principal, timeTaken);
+      } else {
+        LOG.trace(logLine, entity, principal, timeTaken);
+      }
+    }
   }
 
   @Override

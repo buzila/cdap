@@ -62,7 +62,7 @@ import java.util.function.Supplier;
 public class ProgramTwillRunnableModuleTest {
 
   // Runs two sets of tests, one with master environment, one without
-  @Parameterized.Parameters (name = "User Master Environment = {0}")
+  @Parameterized.Parameters(name = "User Master Environment = {0}")
   public static Collection<Object[]> parameters() {
     return Arrays.asList(new Object[][]{
       {true},

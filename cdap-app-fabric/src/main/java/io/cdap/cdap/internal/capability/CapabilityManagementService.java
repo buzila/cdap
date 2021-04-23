@@ -16,6 +16,7 @@
 
 package io.cdap.cdap.internal.capability;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.gson.Gson;
 import com.google.inject.Inject;
 import io.cdap.cdap.common.conf.CConfiguration;
@@ -29,7 +30,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileReader;
-import java.io.IOException;
 import java.io.Reader;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,7 +45,6 @@ public class CapabilityManagementService extends AbstractRetryableScheduledServi
   private final long scheduleIntervalInMillis;
   private final CConfiguration cConf;
   private final CapabilityApplier capabilityApplier;
-  private final SystemProgramManagementService systemProgramManagementService;
 
   @Inject
   CapabilityManagementService(CConfiguration cConf, CapabilityApplier capabilityApplier,
@@ -54,26 +53,14 @@ public class CapabilityManagementService extends AbstractRetryableScheduledServi
             .fixDelay(cConf.getLong(Constants.Capability.DIR_SCAN_INTERVAL_MINUTES), TimeUnit.MINUTES));
     this.cConf = cConf;
     this.capabilityApplier = capabilityApplier;
-    this.systemProgramManagementService = systemProgramManagementService;
     this.scheduleIntervalInMillis = TimeUnit.MINUTES
       .toMillis(cConf.getLong(Constants.Capability.DIR_SCAN_INTERVAL_MINUTES));
   }
 
   @Override
-  protected void doStartUp() {
-    LOG.debug("Starting scheduled service {}", getServiceName());
-    systemProgramManagementService.start();
-  }
-
-  @Override
-  protected void doShutdown() {
-    LOG.debug("Stopping scheduled service {}", getServiceName());
-    systemProgramManagementService.stopAndWait();
-  }
-
-  @Override
-  protected long runTask() throws Exception {
-    LOG.debug("Scanning capability config directory.");
+  @VisibleForTesting
+  public long runTask() throws Exception {
+    LOG.trace("Scanning capability config directory");
     List<CapabilityConfig> capabilityConfigs = scanConfigDirectory();
     //apply all the config
     capabilityApplier.apply(capabilityConfigs);
@@ -90,10 +77,22 @@ public class CapabilityManagementService extends AbstractRetryableScheduledServi
       try (Reader reader = new FileReader(configFile)) {
         CapabilityConfig capabilityConfig = GSON.fromJson(reader, CapabilityConfig.class);
         capabilityConfigs.add(capabilityConfig);
-      } catch (IOException exception) {
+      } catch (Exception exception) {
         LOG.debug("Exception reading capability config file {}", configFile, exception);
       }
     }
     return capabilityConfigs;
+  }
+
+  @Override
+  public void doStartUp() throws Exception {
+    super.doStartUp();
+    capabilityApplier.doStartup();
+  }
+
+  @Override
+  public void doShutdown() throws Exception {
+    super.doShutdown();
+    capabilityApplier.doShutdown();
   }
 }

@@ -20,6 +20,9 @@ import io.cdap.cdap.etl.api.Transform;
 import io.cdap.cdap.etl.common.RecordInfo;
 import io.cdap.cdap.etl.common.TrackedTransform;
 import io.cdap.cdap.etl.spark.CombinedEmitter;
+import org.apache.spark.api.java.function.FlatMapFunction;
+
+import java.util.Iterator;
 
 /**
  * Function that uses a Transform to perform a flatmap.
@@ -27,20 +30,21 @@ import io.cdap.cdap.etl.spark.CombinedEmitter;
  *
  * @param <T> type of input object
  */
-public class TransformFunction<T> implements FlatMapFunc<T, RecordInfo<Object>> {
+public class TransformFunction<T> implements FlatMapFunction<T, RecordInfo<Object>> {
   private final PluginFunctionContext pluginFunctionContext;
+  private final FunctionCache functionCache;
   private transient TrackedTransform<T, Object> transform;
   private transient CombinedEmitter<Object> emitter;
 
-  public TransformFunction(PluginFunctionContext pluginFunctionContext) {
+  public TransformFunction(PluginFunctionContext pluginFunctionContext, FunctionCache functionCache) {
     this.pluginFunctionContext = pluginFunctionContext;
+    this.functionCache = functionCache;
   }
 
   @Override
-  public Iterable<RecordInfo<Object>> call(T input) throws Exception {
+  public Iterator<RecordInfo<Object>> call(T input) throws Exception {
     if (transform == null) {
-      Transform<T, Object> plugin = pluginFunctionContext.createPlugin();
-      plugin.initialize(pluginFunctionContext.createBatchRuntimeContext());
+      Transform<T, Object> plugin = pluginFunctionContext.createAndInitializePlugin(functionCache);
       transform = new TrackedTransform<>(plugin, pluginFunctionContext.createStageMetrics(),
                                          pluginFunctionContext.getDataTracer(),
                                          pluginFunctionContext.getStageStatisticsCollector());
@@ -48,6 +52,6 @@ public class TransformFunction<T> implements FlatMapFunc<T, RecordInfo<Object>> 
     }
     emitter.reset();
     transform.transform(input, emitter);
-    return emitter.getEmitted();
+    return emitter.getEmitted().iterator();
   }
 }

@@ -30,7 +30,7 @@ interface IOverviewMetricsData {
   dataReplicated: number;
 }
 
-const INITIAL_DATA = {
+export const INITIAL_DATA = {
   inserts: 0,
   updates: 0,
   deletes: 0,
@@ -71,6 +71,10 @@ export function parseOverviewMetrics(
     const metricName = METRIC_MAP[metricSeries.metricName];
     const tableName = Object.values(metricSeries.grouping)[0];
 
+    if (!tableMap[tableName]) {
+      return;
+    }
+
     const sumData = metricSeries.data.reduce((prev, curr) => {
       return prev + curr.value;
     }, 0);
@@ -89,10 +93,13 @@ export function parseOverviewMetrics(
 
   tableList.forEach((tableInfo) => {
     const tableName = getFullyQualifiedTableName(tableInfo);
+    if (!tableMap[tableName]) {
+      return;
+    }
     const tableMetrics = tableMap[tableName];
     const totalEvents = tableMetrics.inserts + tableMetrics.updates + tableMetrics.deletes;
     tableMap[tableName].eventsPerMin = truncateNumber(totalEvents / durationMinute, PRECISION);
-    tableMap[tableName].totalEvents = totalEvents;
+    tableMap[tableName].totalEvents = truncateNumber(totalEvents);
     tableMap[tableName].latency = truncateNumber(tableMap[tableName].latency, PRECISION);
     tableMap[tableName].dataReplicated = convertBytesToHumanReadable(
       tableMap[tableName].dataReplicated

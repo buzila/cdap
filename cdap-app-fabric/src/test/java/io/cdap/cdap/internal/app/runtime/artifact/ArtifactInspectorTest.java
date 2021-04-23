@@ -19,7 +19,6 @@ package io.cdap.cdap.internal.app.runtime.artifact;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.io.Files;
 import io.cdap.cdap.api.artifact.ApplicationClass;
 import io.cdap.cdap.api.artifact.ArtifactClasses;
 import io.cdap.cdap.api.artifact.CloseableClassLoader;
@@ -188,6 +187,31 @@ public class ArtifactInspectorTest {
     }
   }
 
+  @Test
+  public void testGetClassNameCheckPredicate() {
+    Assert.assertTrue(ArtifactInspector.getClassNameCheckPredicate(ImmutableList.of(
+      "my.package"
+    )).test("my/package/my.class"));
+    Assert.assertTrue(ArtifactInspector.getClassNameCheckPredicate(ImmutableList.of(
+      "blah", "my.package", "blah2"
+    )).test("my/package/my.class"));
+    Assert.assertTrue(ArtifactInspector.getClassNameCheckPredicate(ImmutableList.of(
+      "my.package", "my.package.subpackage"
+    )).test("my/package/subpackage/my.class"));
+    Assert.assertFalse(ArtifactInspector.getClassNameCheckPredicate(ImmutableList.of(
+      "my.package"
+    )).test("my/package/subpackage/my.class"));
+    Assert.assertFalse(ArtifactInspector.getClassNameCheckPredicate(ImmutableList.of(
+      "my.package"
+    )).test("prefix/my/package/my.class"));
+    Assert.assertFalse(ArtifactInspector.getClassNameCheckPredicate(ImmutableList.of(
+      "my.package"
+    )).test("prefix/my/package/my.notclass"));
+    Assert.assertFalse(ArtifactInspector.getClassNameCheckPredicate(ImmutableList.of(
+      "my.package"
+    )).test("prefix/my/package/my.class/some.class"));
+  }
+
   private File getAppFile() throws IOException {
     Manifest manifest = new Manifest();
     manifest.getMainAttributes().put(ManifestFields.EXPORT_PACKAGE, InspectionApp.class.getPackage().getName());
@@ -198,7 +222,7 @@ public class ArtifactInspectorTest {
     Location deploymentJar = AppJarHelper.createDeploymentJar(new LocalLocationFactory(TMP_FOLDER.newFolder()),
       cls, manifest);
     DirUtils.mkdirs(destFile.getParentFile());
-    Files.copy(Locations.newInputSupplier(deploymentJar), destFile);
+    Locations.linkOrCopyOverwrite(deploymentJar, destFile);
     return destFile;
   }
 }

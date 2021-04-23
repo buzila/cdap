@@ -104,6 +104,24 @@ my-dag-plus {
         }
       }
     }
+    .toggle-comments-action-btn {
+      &.toggle-enabled {
+        background-color: #6a7387;
+        color: white;
+        &:before {
+          background-color: #7cd2eb;
+        }
+      }
+      &:before {
+        content: ' ';
+        position: absolute;
+        height: 5px;
+        width: 5px;
+        background: #1a73e8;
+        border-radius: 50%;
+        right: 5px;
+      }
+    }
   }
 
   .my-js-dag.preview-mode {
@@ -194,6 +212,18 @@ my-dag-plus {
 
       &.node-menu-open {
         z-index: 3;
+      }
+
+      .comments-wrapper {
+        position: absolute;
+        top: -30px;
+        right: 0;
+        color: #1a73e8;
+        z-index: 2;
+
+        [comment] {
+          display: block;
+        }
       }
 
       .node {
@@ -605,12 +635,12 @@ my-dag-plus {
     }
 
     .node-popover-menu {
-      width: 85px;
+      width: 120px;
       border: 1px solid black;
       background-color: white;
       z-index: 1000;
       position: absolute;
-      right: -54px;
+      right: calc(30px - 120px);
       top: 65px;
 
       .menu-icon {

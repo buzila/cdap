@@ -68,6 +68,13 @@ const getExpressStaticConfig = () => {
   };
 };
 
+export const stripAuthHeadersInProxyMode = (cdapConfig, res) => {
+  if (cdapConfig['security.authentication.mode'] === 'PROXY' && typeof res.headers === 'object') {
+    delete res.headers.Authorization;
+    delete res.headers[cdapConfig['security.authentication.proxy.user.identity.header']];
+  }
+  return res;
+}
 function makeApp(authAddress, cdapConfig, uiSettings) {
   var app = express();
   /**
@@ -189,6 +196,7 @@ function makeApp(authAddress, cdapConfig, uiSettings) {
       },
       marketUrls: getMarketUrls(cdapConfig),
       securityEnabled: authAddress.enabled,
+      securityMode: cdapConfig['security.authentication.mode'],
       isEnterprise: isModeProduction(),
       sandboxMode: process.env.NODE_ENV,
       authRefreshURL: cdapConfig['dashboard.auth.refresh.path'] || false,
@@ -267,6 +275,11 @@ function makeApp(authAddress, cdapConfig, uiSettings) {
         log.error('Error', e);
       })
       .pipe(request(forwardRequestObject))
+      .on('response', function(resFromBackend) {
+        var strippedResponse = stripAuthHeadersInProxyMode(cdapConfig, resFromBackend);
+        var newHeaders = strippedResponse.headers;
+        res.set(newHeaders);
+      })
       .on('error', function(e) {
         log.error('Error', e);
       })
@@ -290,6 +303,16 @@ function makeApp(authAddress, cdapConfig, uiSettings) {
       customHeaders = {
         authorization: 'Bearer ' + req.cookies['CDAP_Auth_Token'],
       };
+    }
+
+    if (req.headers.authorization) {
+      customHeaders = {
+        authorization: req.headers.authorization,
+      };
+      if (cdapConfig['security.authentication.mode'] === 'PROXY') {
+        const userIdProperty = cdapConfig['security.authentication.proxy.user.identity.header'];
+        customHeaders[userIdProperty] = req.headers[userIdProperty];
+      }
     }
 
     if (customHeaders) {
@@ -316,7 +339,8 @@ function makeApp(authAddress, cdapConfig, uiSettings) {
             } else {
               responseHeaders['Content-Type'] = 'text/plain';
             }
-
+            let strippedResponse = stripAuthHeadersInProxyMode(cdapConfig, { headers: responseHeaders });
+            responseHeaders = strippedResponse.headers;
             res.set(responseHeaders);
           }
         })
@@ -371,6 +395,11 @@ function makeApp(authAddress, cdapConfig, uiSettings) {
         log.error(e);
       })
       .pipe(request.post(opts))
+      .on('response', function(newRes) {
+        var strippedResponse = stripAuthHeadersInProxyMode(cdapConfig, newRes);
+        var newHeaders = strippedResponse.headers;
+        res.set(newHeaders);
+      })
       .on('error', function(e) {
         log.error(e);
       })
@@ -503,6 +532,7 @@ function makeApp(authAddress, cdapConfig, uiSettings) {
         },
         function(err, response) {
           if (err) {
+            log.info('Server responded with error: ' + err + ' for API : "/v3/namespaces"');
             res.status(500).send(err);
           } else {
             res.status(response.statusCode).send('OK');

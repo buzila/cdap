@@ -1,5 +1,5 @@
 /*
- * Copyright © 2017 Cask Data, Inc.
+ * Copyright © 2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -17,8 +17,8 @@
 package io.cdap.cdap.etl.spark;
 
 import io.cdap.cdap.etl.common.StageStatisticsCollector;
-import org.apache.spark.Accumulator;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.util.LongAccumulator;
 
 import java.io.Serializable;
 
@@ -26,41 +26,41 @@ import java.io.Serializable;
  * Implementation of {@link StageStatisticsCollector} for batch spark pipelines.
  */
 public class SparkStageStatisticsCollector implements StageStatisticsCollector, Serializable {
-  private static final long serialVersionUID = -7897960584858589314L;
-  private final Accumulator<Double> inputRecordCounter;
-  private final Accumulator<Double> outputRecordCounter;
-  private final Accumulator<Double> errorRecordCounter;
+  private static final long serialVersionUID = -7897960584858589315L;
+  private final LongAccumulator inputRecordCounter;
+  private final LongAccumulator outputRecordCounter;
+  private final LongAccumulator errorRecordCounter;
 
   public SparkStageStatisticsCollector(JavaSparkContext jsc) {
-    this.inputRecordCounter = jsc.accumulator(0.0);
-    this.outputRecordCounter = jsc.accumulator(0.0);
-    this.errorRecordCounter = jsc.accumulator(0.0);
+    this.inputRecordCounter = jsc.sc().longAccumulator();
+    this.outputRecordCounter = jsc.sc().longAccumulator();
+    this.errorRecordCounter = jsc.sc().longAccumulator();
   }
 
   @Override
   public void incrementInputRecordCount() {
-    inputRecordCounter.add(1.0);
+    inputRecordCounter.add(1);
   }
 
   @Override
   public void incrementOutputRecordCount() {
-    outputRecordCounter.add(1.0);
+    outputRecordCounter.add(1);
   }
 
   @Override
   public void incrementErrorRecordCount() {
-    errorRecordCounter.add(1.0);
+    errorRecordCounter.add(1);
   }
 
   public long getInputRecordCount() {
-    return inputRecordCounter.value().longValue();
+    return inputRecordCounter.value();
   }
 
   public long getOutputRecordCount() {
-    return outputRecordCounter.value().longValue();
+    return outputRecordCounter.value();
   }
 
   public long getErrorRecordCount() {
-    return errorRecordCounter.value().longValue();
+    return errorRecordCounter.value();
   }
 }

@@ -381,11 +381,21 @@ class HydratorPlusPlusTopPanelCtrl {
             - Multiple macros (e.g. '${macro1}${macro2}')
             - And combined (e,g, '${function(${macro1})}${macro2}')
             More complicated cases will be handled by the backend
+
+            TODO: CDAP-17726 - We need API from backend to get macros, given a pipeline config
+            The logic UI uses to parse and understand a macro is faulty and does not cover
+            complex cases while running preview.
+
+            This is a temporary fix to not surface simple cases of macro functions.
+            Hence the specific check for known macro functions that doesn't need user input.
           */
           if (macroString &&
             typeof macroString === 'string' &&
             macroString.indexOf('${') !== -1 &&
-            macroString.indexOf('}') !== -1
+            macroString.indexOf('}') !== -1 &&
+            macroString.indexOf('${logicalStartTime(') === -1 &&
+            macroString.indexOf('${secure(') === -1 &&
+            macroString.indexOf('${oauth(') === -1
           ) {
             let macroKeys = [];
             let currentMacroDepth = 0;
@@ -564,8 +574,9 @@ class HydratorPlusPlusTopPanelCtrl {
       });
   }
 
-  toggleScheduler() {
+  toggleScheduler(e) {
     this.viewScheduler = !this.viewScheduler;
+    e.stopPropagation();
   }
 
   applyRuntimeArguments() {
@@ -768,6 +779,7 @@ class HydratorPlusPlusTopPanelCtrl {
         DEPLOY_FAILED,
         RUN_FAILED,
         KILLED_BY_TIMER,
+        KILLED_BY_EXCEEDING_MEMORY_LIMIT
       } = window.CaskCommon.PREVIEW_STATUS;
       this.updateTimerLabelAndTitle(res);
       if ([RUNNING, INIT, ACQUIRED, WAITING].indexOf(res.status) === -1) {
@@ -779,8 +791,14 @@ class HydratorPlusPlusTopPanelCtrl {
             type: 'success',
             content: `${pipelinePreviewPlaceholder} has completed successfully.`
           });
-        } else if (res.status === DEPLOY_FAILED || res.status === RUN_FAILED) {
+        } else {
           let failureMsg = this.myHelpers.objectQuery(res, 'throwable', 'message') || `${pipelinePreviewPlaceholder} has failed. Please check the logs for more information.`;
+          if (res.status === DEPLOY_FAILED || res.status === KILLED_BY_EXCEEDING_MEMORY_LIMIT) {
+            failureMsg = this.myHelpers.objectQuery(res, 'throwable', 'message') || 'Unable to run preview. Please try again in sometime.';
+          }
+          if (res.status === RUN_FAILED) {
+            failureMsg = `${pipelinePreviewPlaceholder} has failed. Please check the logs for more information.`;
+          }
           this.myAlertOnValium.show({
             type: 'danger',
             content: failureMsg,
@@ -878,7 +896,11 @@ class HydratorPlusPlusTopPanelCtrl {
   }
 
   _checkAndShowConfirmationModalOnActionPlugin(proceedCb) {
-    if (!this.HydratorPlusPlusConfigStore.validateState(true)) {
+    const isPipelineValid = this.HydratorPlusPlusConfigStore.validateState({
+      showConsoleMessage: true,
+      validateBeforePreview: true
+    });
+    if (!isPipelineValid) {
       return;
     }
 

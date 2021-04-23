@@ -24,6 +24,8 @@ import Status from 'components/Status';
 import { Link } from 'react-router-dom';
 import ActionsPopover, { IAction } from 'components/ActionsPopover';
 import DeleteConfirmation, { InstanceType } from 'components/Replicator/DeleteConfirmation';
+import DownloadFile from 'services/download-file';
+import { Redirect } from 'react-router-dom';
 
 const styles = (theme): StyleRules => {
   return {
@@ -60,6 +62,7 @@ const DeployedView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
   const [statusMap, setStatusMap] = React.useState({});
   const [configMap, setConfigMap] = React.useState({});
   const [replicatorNameDelete, setReplicatorNameDelete] = React.useState(null);
+  const [redirect, setRedirect] = React.useState<string>();
 
   // TODO: Replace with GraphQL
   function fetchList() {
@@ -109,16 +112,22 @@ const DeployedView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
             config = JSON.parse(replicator.configuration);
           } catch (e) {
             // tslint:disable-next-line: no-console
-            console.log('Failed to parse replication pipeline configuration', e);
+            console.log('Failed to parse replication job configuration', e);
             return;
           }
 
-          const replicatorObj = {};
-          config.stages.forEach((stage) => {
-            replicatorObj[stage.plugin.type] = stage.plugin.name;
-          });
+          const connection = objectQuery(config, 'connections', 0);
+          const replicatorObj = {
+            from: connection.from,
+            to: connection.to,
+          };
 
-          map[replicator.name] = replicatorObj;
+          map[replicator.name] = {
+            name: replicator.name,
+            artifact: replicator.artifact,
+            config,
+            pluginDisplay: replicatorObj,
+          };
         });
 
         setConfigMap(map);
@@ -128,18 +137,50 @@ const DeployedView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
 
   React.useEffect(fetchList, []);
 
+  function getPipelineConfig(replicationName) {
+    const replicationObj = objectQuery(configMap, replicationName);
+
+    const replicationConfig = {
+      name: replicationObj.name,
+      artifact: replicationObj.artifact,
+      config: replicationObj.config,
+    };
+
+    return replicationConfig;
+  }
+
+  function exportPipeline(replicationName) {
+    const replicationConfig = getPipelineConfig(replicationName);
+    DownloadFile(replicationConfig);
+  }
+
+  function duplicatePipeline(replicationName) {
+    const replicationObj = getPipelineConfig(replicationName);
+    const replicationConfig = {
+      ...replicationObj,
+      name: '',
+    };
+
+    const cloneId = replicationObj.name;
+    window.localStorage.setItem(cloneId, JSON.stringify(replicationConfig));
+
+    const createViewLink = `/ns/${getCurrentNamespace()}/replication/create?cloneId=${cloneId}`;
+    setRedirect(createViewLink);
+  }
+
+  if (redirect) {
+    return <Redirect to={redirect} />;
+  }
+
   return (
     <div className={classes.root}>
-      <div className={classes.headerText}>
-        {replicators.length} replication {replicators.length === 1 ? 'pipeline' : 'pipelines'} -
-        Select a row to view details
-      </div>
+      <div className={classes.headerText}>{replicators.length} deployed</div>
 
       <div className={`grid-wrapper ${classes.gridWrapper}`}>
         <div className="grid grid-container grid-compact">
           <div className="grid-header">
             <div className="grid-row">
-              <div>Replication pipeline name</div>
+              <div>Name</div>
               <div>From / To</div>
               <div>Status</div>
               <div />
@@ -148,10 +189,22 @@ const DeployedView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
 
           <div className="grid-body">
             {replicators.map((replicator) => {
-              const source = objectQuery(configMap, replicator.name, PluginType.source) || '--';
-              const target = objectQuery(configMap, replicator.name, PluginType.target) || '--';
+              const source =
+                objectQuery(configMap, replicator.name, 'pluginDisplay', 'from') || '--';
+              const target = objectQuery(configMap, replicator.name, 'pluginDisplay', 'to') || '--';
 
               const actions: IAction[] = [
+                {
+                  label: 'Export',
+                  actionFn: () => exportPipeline(replicator.name),
+                },
+                {
+                  label: 'Duplicate',
+                  actionFn: () => duplicatePipeline(replicator.name),
+                },
+                {
+                  label: 'separator',
+                },
                 {
                   label: 'Delete',
                   actionFn: () => setReplicatorNameDelete(replicator.name),

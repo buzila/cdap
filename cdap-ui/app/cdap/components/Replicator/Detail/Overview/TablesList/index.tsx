@@ -17,7 +17,11 @@
 import React, { useContext, useEffect, useState } from 'react';
 import withStyles, { WithStyles, StyleRules } from '@material-ui/core/styles/withStyles';
 import { DetailContext } from 'components/Replicator/Detail';
-import { generateTableKey, getFullyQualifiedTableName } from 'components/Replicator/utilities';
+import {
+  generateTableKey,
+  getFullyQualifiedTableName,
+  getTableDisplayName,
+} from 'components/Replicator/utilities';
 import { Map } from 'immutable';
 import { MyReplicatorApi } from 'api/replicator';
 import { getCurrentNamespace } from 'services/NamespaceStore';
@@ -34,11 +38,16 @@ import IconSVG from 'components/IconSVG';
 import MetricsQueryHelper from 'services/MetricsQueryHelper';
 import { PROGRAM_INFO } from 'components/Replicator/constants';
 import { MyMetricApi } from 'api/metric';
-import { parseOverviewMetrics } from 'components/Replicator/Detail/Overview/TablesList/metricsParser';
+import {
+  parseOverviewMetrics,
+  INITIAL_DATA,
+} from 'components/Replicator/Detail/Overview/TablesList/metricsParser';
 import { compare } from 'natural-orderby';
 import TableColumnGroup from 'components/Table/TableColumnGroup';
 import ColumnGroup from 'components/Table/ColumnGroup';
 import TimePeriodDropdown from 'components/Replicator/Detail/TimePeriodDropdown';
+import capitalize from 'lodash/capitalize';
+import { truncateNumber } from 'services/helpers';
 
 const styles = (theme): StyleRules => {
   return {
@@ -124,18 +133,21 @@ const TablesListView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
   useEffect(filterTableBySearch, [search, tables]);
 
   useEffect(() => {
-    if (!offsetBasePath || offsetBasePath.length === 0) {
-      return;
-    }
-
     const params = {
       namespace: getCurrentNamespace(),
     };
 
-    const body = {
+    interface IRequestBody {
+      name: string;
+      offsetBasePath?: string;
+    }
+    const body: IRequestBody = {
       name,
-      offsetBasePath,
     };
+
+    if (offsetBasePath && offsetBasePath.length > 0) {
+      body.offsetBasePath = offsetBasePath;
+    }
 
     // TODO: optimize polling
     // Don't poll when status is not running
@@ -191,7 +203,7 @@ const TablesListView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
 
     const params = [start, end, aggregate, groupBy, tagsParams, metrics].join('&');
 
-    MyMetricApi.queryTags({ params }).subscribe(
+    const metricsPoll$ = MyMetricApi.pollQueryTags({ params }).subscribe(
       (res) => {
         setTableMetricsMap(parseOverviewMetrics(res, tables.toList().toJS()));
       },
@@ -200,6 +212,12 @@ const TablesListView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
         console.log('err', err);
       }
     );
+
+    return () => {
+      if (metricsPoll$ && typeof metricsPoll$.unsubscribe === 'function') {
+        metricsPoll$.unsubscribe();
+      }
+    };
   }, [timeRange, tables]);
   return (
     <div className={classes.root}>
@@ -275,14 +293,16 @@ const TablesListView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
             const numColumns = tableColumns ? tableColumns.size : 0;
             const tableStatus = statusMap.get(tableKey) || 'IDLE';
             const icon = tableStatus === 'SNAPSHOTTING' ? 'icon-circle-o' : 'icon-circle';
-            const tableDisplayName = row.get('table');
+            const tableDisplayName = getTableDisplayName(row);
             const tableMetricsKey = getFullyQualifiedTableName(row);
-            const tableMetrics = tableMetricsMap[tableMetricsKey] || {};
+            const tableMetrics = tableMetricsMap[tableMetricsKey] || { ...INITIAL_DATA };
 
             return (
               <TableRow key={tableKey.toString()}>
                 <TableCell>
-                  <IconSVG name={icon} className={classes[tableStatus]} />
+                  <span title={capitalize(tableStatus)}>
+                    <IconSVG name={icon} className={classes[tableStatus]} />
+                  </span>
                 </TableCell>
                 <TableCell>{tableDisplayName}</TableCell>
                 <TableCell textAlign="right">{numColumns === 0 ? 'All' : numColumns}</TableCell>
@@ -291,9 +311,9 @@ const TablesListView: React.FC<WithStyles<typeof styles>> = ({ classes }) => {
                 <TableCell textAlign="right">{tableMetrics.eventsPerMin}</TableCell>
                 <TableCell textAlign="right">{tableMetrics.latency}</TableCell>
                 <TableCell />
-                <TableCell textAlign="right">{tableMetrics.inserts}</TableCell>
-                <TableCell textAlign="right">{tableMetrics.updates}</TableCell>
-                <TableCell textAlign="right">{tableMetrics.deletes}</TableCell>
+                <TableCell textAlign="right">{truncateNumber(tableMetrics.inserts)}</TableCell>
+                <TableCell textAlign="right">{truncateNumber(tableMetrics.updates)}</TableCell>
+                <TableCell textAlign="right">{truncateNumber(tableMetrics.deletes)}</TableCell>
               </TableRow>
             );
           })}

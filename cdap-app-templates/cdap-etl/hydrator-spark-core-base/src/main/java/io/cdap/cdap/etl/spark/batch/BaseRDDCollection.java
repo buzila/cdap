@@ -29,6 +29,8 @@ import io.cdap.cdap.etl.api.StageMetrics;
 import io.cdap.cdap.etl.api.batch.SparkCompute;
 import io.cdap.cdap.etl.api.batch.SparkExecutionPluginContext;
 import io.cdap.cdap.etl.api.batch.SparkSink;
+import io.cdap.cdap.etl.api.join.JoinCondition;
+import io.cdap.cdap.etl.api.join.JoinField;
 import io.cdap.cdap.etl.api.lineage.AccessType;
 import io.cdap.cdap.etl.api.streaming.Windower;
 import io.cdap.cdap.etl.common.Constants;
@@ -41,7 +43,6 @@ import io.cdap.cdap.etl.common.RecordInfo;
 import io.cdap.cdap.etl.common.StageStatisticsCollector;
 import io.cdap.cdap.etl.common.TrackedIterator;
 import io.cdap.cdap.etl.proto.v2.spec.StageSpec;
-import io.cdap.cdap.etl.spark.Compat;
 import io.cdap.cdap.etl.spark.SparkCollection;
 import io.cdap.cdap.etl.spark.SparkPairCollection;
 import io.cdap.cdap.etl.spark.SparkPipelineRuntime;
@@ -53,12 +54,12 @@ import io.cdap.cdap.etl.spark.function.AggregatorMergePartitionFunction;
 import io.cdap.cdap.etl.spark.function.AggregatorMergeValueFunction;
 import io.cdap.cdap.etl.spark.function.AggregatorReduceGroupByFunction;
 import io.cdap.cdap.etl.spark.function.CountingFunction;
-import io.cdap.cdap.etl.spark.function.FlatMapFunc;
+import io.cdap.cdap.etl.spark.function.FunctionCache;
 import io.cdap.cdap.etl.spark.function.MultiOutputTransformFunction;
 import io.cdap.cdap.etl.spark.function.MultiSinkFunction;
-import io.cdap.cdap.etl.spark.function.PairFlatMapFunc;
 import io.cdap.cdap.etl.spark.function.PluginFunctionContext;
 import io.cdap.cdap.etl.spark.function.TransformFunction;
+import io.cdap.cdap.etl.spark.join.JoinExpressionRequest;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
@@ -96,14 +97,18 @@ public abstract class BaseRDDCollection<T> implements SparkCollection<T> {
   protected final DatasetContext datasetContext;
   protected final SparkBatchSinkFactory sinkFactory;
   protected final JavaRDD<T> rdd;
+  protected final FunctionCache.Factory functionCacheFactory;
 
-  protected BaseRDDCollection(JavaSparkExecutionContext sec, JavaSparkContext jsc, SQLContext sqlContext,
-                              DatasetContext datasetContext, SparkBatchSinkFactory sinkFactory, JavaRDD<T> rdd) {
+  protected BaseRDDCollection(JavaSparkExecutionContext sec, FunctionCache.Factory functionCacheFactory,
+                              JavaSparkContext jsc, SQLContext sqlContext,
+                              DatasetContext datasetContext, SparkBatchSinkFactory sinkFactory,
+                              JavaRDD<T> rdd) {
     this.sec = sec;
     this.jsc = jsc;
     this.sqlContext = sqlContext;
     this.datasetContext = datasetContext;
     this.sinkFactory = sinkFactory;
+    this.functionCacheFactory = functionCacheFactory;
     this.rdd = rdd;
   }
 
@@ -135,14 +140,16 @@ public abstract class BaseRDDCollection<T> implements SparkCollection<T> {
   @Override
   public SparkCollection<RecordInfo<Object>> transform(StageSpec stageSpec, StageStatisticsCollector collector) {
     PluginFunctionContext pluginFunctionContext = new PluginFunctionContext(stageSpec, sec, collector);
-    return wrap(rdd.flatMap(Compat.convert(new TransformFunction<T>(pluginFunctionContext))));
+    return wrap(rdd.flatMap(new TransformFunction<T>(
+      pluginFunctionContext, functionCacheFactory.newCache())));
   }
 
   @Override
   public SparkCollection<RecordInfo<Object>> multiOutputTransform(StageSpec stageSpec,
                                                                   StageStatisticsCollector collector) {
     PluginFunctionContext pluginFunctionContext = new PluginFunctionContext(stageSpec, sec, collector);
-    return wrap(rdd.flatMap(Compat.convert(new MultiOutputTransformFunction<T>(pluginFunctionContext))));
+    return wrap(rdd.flatMap(new MultiOutputTransformFunction<T>(
+      pluginFunctionContext, functionCacheFactory.newCache())));
   }
 
   @Override
@@ -159,18 +166,16 @@ public abstract class BaseRDDCollection<T> implements SparkCollection<T> {
   public SparkCollection<RecordInfo<Object>> aggregate(StageSpec stageSpec, @Nullable Integer partitions,
                                                        StageStatisticsCollector collector) {
     PluginFunctionContext pluginFunctionContext = new PluginFunctionContext(stageSpec, sec, collector);
-    PairFlatMapFunc<T, Object, T> groupByFunction = new AggregatorGroupByFunction<>(pluginFunctionContext);
-    PairFlatMapFunction<T, Object, T> sparkGroupByFunction = Compat.convert(groupByFunction);
+    PairFlatMapFunction<T, Object, T> groupByFunction = new AggregatorGroupByFunction<>(
+      pluginFunctionContext, functionCacheFactory.newCache());
 
-    JavaPairRDD<Object, T> keyedCollection = rdd.flatMapToPair(sparkGroupByFunction);
+    JavaPairRDD<Object, T> keyedCollection = rdd.flatMapToPair(groupByFunction);
 
     JavaPairRDD<Object, Iterable<T>> groupedCollection = partitions == null ?
       keyedCollection.groupByKey() : keyedCollection.groupByKey(partitions);
 
-    FlatMapFunc<Tuple2<Object, Iterable<T>>, RecordInfo<Object>> aggregateFunction =
-      new AggregatorAggregateFunction<>(pluginFunctionContext);
     FlatMapFunction<Tuple2<Object, Iterable<T>>, RecordInfo<Object>> sparkAggregateFunction =
-      Compat.convert(aggregateFunction);
+      new AggregatorAggregateFunction<>(pluginFunctionContext, functionCacheFactory.newCache());
 
     return wrap(groupedCollection.flatMap(sparkAggregateFunction));
   }
@@ -179,29 +184,32 @@ public abstract class BaseRDDCollection<T> implements SparkCollection<T> {
   public SparkCollection<RecordInfo<Object>> reduceAggregate(StageSpec stageSpec, @Nullable Integer partitions,
                                                              StageStatisticsCollector collector) {
     PluginFunctionContext pluginFunctionContext = new PluginFunctionContext(stageSpec, sec, collector);
-    PairFlatMapFunc<T, Object, T> groupByFunction = new AggregatorReduceGroupByFunction<>(pluginFunctionContext);
-    PairFlatMapFunction<T, Object, T> sparkGroupByFunction = Compat.convert(groupByFunction);
+    PairFlatMapFunction<T, Object, T> groupByFunction = new AggregatorReduceGroupByFunction<>(
+      pluginFunctionContext, functionCacheFactory.newCache());
 
-    JavaPairRDD<Object, T> keyedCollection = rdd.flatMapToPair(sparkGroupByFunction);
+    JavaPairRDD<Object, T> keyedCollection = rdd.flatMapToPair(groupByFunction);
 
-    Function<T, Object> initializeFunction = new AggregatorInitializeFunction<>(pluginFunctionContext);
-    Function2<Object, T, Object> mergeValueFunction = new AggregatorMergeValueFunction<>(pluginFunctionContext);
+    Function<T, Object> initializeFunction = new AggregatorInitializeFunction<>(
+      pluginFunctionContext, functionCacheFactory.newCache());
+    Function2<Object, T, Object> mergeValueFunction = new AggregatorMergeValueFunction<>(
+      pluginFunctionContext, functionCacheFactory.newCache());
     Function2<Object, Object, Object> mergePartitionFunction =
-      new AggregatorMergePartitionFunction<>(pluginFunctionContext);
+      new AggregatorMergePartitionFunction<>(pluginFunctionContext, functionCacheFactory.newCache());
     JavaPairRDD<Object, Object> groupedCollection = partitions == null ?
       keyedCollection.combineByKey(initializeFunction, mergeValueFunction, mergePartitionFunction) :
       keyedCollection.combineByKey(initializeFunction, mergeValueFunction, mergePartitionFunction, partitions);
 
-    FlatMapFunc<Tuple2<Object, Object>, RecordInfo<Object>> postFunction =
-      new AggregatorFinalizeFunction<>(pluginFunctionContext);
-    FlatMapFunction<Tuple2<Object, Object>, RecordInfo<Object>> postReduceFunction = Compat.convert(postFunction);
+    FlatMapFunction<Tuple2<Object, Object>, RecordInfo<Object>> postFunction =
+      new AggregatorFinalizeFunction<>(pluginFunctionContext, functionCacheFactory.newCache());
 
-    return wrap(groupedCollection.flatMap(postReduceFunction));
+    return wrap(groupedCollection.flatMap(postFunction));
   }
 
   @Override
   public <K, V> SparkPairCollection<K, V> flatMapToPair(PairFlatMapFunction<T, K, V> function) {
-    return new PairRDDCollection<>(sec, jsc, sqlContext, datasetContext, sinkFactory, rdd.flatMapToPair(function));
+    return new PairRDDCollection<>(sec, functionCacheFactory, jsc,
+                                   sqlContext, datasetContext, sinkFactory,
+                                   rdd.flatMapToPair(function));
   }
 
   @Override
@@ -242,7 +250,7 @@ public abstract class BaseRDDCollection<T> implements SparkCollection<T> {
       public void run() {
         PairFlatMapFunction<T, String, KeyValue<Object, Object>> multiSinkFunction =
           (PairFlatMapFunction<T, String, KeyValue<Object, Object>>)
-            Compat.convert(new MultiSinkFunction(sec, phaseSpec, group, collectors));
+            new MultiSinkFunction(sec, phaseSpec, group, collectors);
         JavaPairRDD<String, KeyValue<Object, Object>> taggedOutput = rdd.flatMapToPair(multiSinkFunction);
         for (String outputName : sinkFactory.writeCombinedRDD(taggedOutput, sec, sinks)) {
           recordLineage(outputName);
@@ -304,7 +312,7 @@ public abstract class BaseRDDCollection<T> implements SparkCollection<T> {
   }
 
   protected <U> RDDCollection<U> wrap(JavaRDD<U> rdd) {
-    return new RDDCollection<>(sec, jsc, sqlContext, datasetContext, sinkFactory, rdd);
+    return new RDDCollection<>(sec, functionCacheFactory, jsc, sqlContext, datasetContext, sinkFactory, rdd);
   }
 
   protected Column eq(Column left, Column right, boolean isNullSafe) {
@@ -312,5 +320,55 @@ public abstract class BaseRDDCollection<T> implements SparkCollection<T> {
       return left.eqNullSafe(right);
     }
     return left.equalTo(right);
+  }
+
+  static String getSQL(JoinExpressionRequest join) {
+    JoinCondition.OnExpression condition = join.getCondition();
+    Map<String, String> datasetAliases = condition.getDatasetAliases();
+    String leftName = join.getLeft().getStage();
+    String leftAlias = datasetAliases.getOrDefault(leftName, leftName);
+    String rightName = join.getRight().getStage();
+    String rightAlias = datasetAliases.getOrDefault(rightName, rightName);
+
+    StringBuilder query = new StringBuilder("SELECT ");
+    // SELECT /*+ BROADCAST(t1), BROADCAST(t2) */
+    // see https://spark.apache.org/docs/3.0.0/sql-ref-syntax-qry-select-hints.html for more info on join hints
+    if (join.getLeft().isBroadcast() && join.getRight().isBroadcast()) {
+      query.append("/*+ BROADCAST(").append(leftAlias).append("), BROADCAST(").append(rightAlias).append(") */ ");
+    } else if (join.getLeft().isBroadcast()) {
+      query.append("/*+ BROADCAST(").append(leftAlias).append(") */ ");
+    } else if (join.getRight().isBroadcast()) {
+      query.append("/*+ BROADCAST(").append(rightAlias).append(") */ ");
+    }
+
+    for (JoinField field : join.getFields()) {
+      String outputName = field.getAlias() == null ? field.getFieldName() : field.getAlias();
+      String datasetName = datasetAliases.getOrDefault(field.getStageName(), field.getStageName());
+      // `datasetName`.`fieldName` as outputName
+      query.append("`").append(datasetName).append("`.`")
+        .append(field.getFieldName()).append("` as ").append(outputName).append(", ");
+    }
+    // remove trailing ', '
+    query.setLength(query.length() - 2);
+
+    String joinType;
+    boolean leftRequired = join.getLeft().isRequired();
+    boolean rightRequired = join.getRight().isRequired();
+    if (leftRequired && rightRequired) {
+      joinType = "JOIN";
+    } else if (leftRequired && !rightRequired) {
+      joinType = "LEFT OUTER JOIN";
+    } else if (!leftRequired && rightRequired) {
+      joinType = "RIGHT OUTER JOIN";
+    } else {
+      joinType = "FULL OUTER JOIN";
+    }
+
+    // FROM `leftDataset` as `leftAlias` JOIN `rightDataset` as `rightAlias`
+    query.append(" FROM `").append(leftName).append("` as `").append(leftAlias).append("` ");
+    query.append(joinType).append(" `").append(rightName).append("` as `").append(rightAlias).append("` ");
+    // ON [expr]
+    query.append(" ON ").append(condition.getExpression());
+    return query.toString();
   }
 }

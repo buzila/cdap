@@ -30,7 +30,6 @@ import T from 'i18n-react';
 import If from 'components/If';
 import LoadingSVGCentered from 'components/LoadingSVGCentered';
 import withStyles, { StyleRules, WithStyles } from '@material-ui/styles/withStyles';
-import Button from '@material-ui/core/Button';
 
 const styles = (theme): StyleRules => {
   return {
@@ -39,8 +38,8 @@ const styles = (theme): StyleRules => {
       gridTemplateRows: 'auto',
       margin: '0',
       textAlign: 'left',
-      width: '100%',
-      paddingTop: '10px',
+      width: '730px',
+      padding: '10px 30px 30px',
     },
     loading: {
       minHeight: '200px',

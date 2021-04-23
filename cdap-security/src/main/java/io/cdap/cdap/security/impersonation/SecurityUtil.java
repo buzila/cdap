@@ -1,5 +1,5 @@
 /*
- * Copyright © 2017 Cask Data, Inc.
+ * Copyright © 2017-2021 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -21,6 +21,7 @@ import io.cdap.cdap.common.conf.Constants;
 import io.cdap.cdap.proto.id.KerberosPrincipalId;
 import io.cdap.cdap.proto.id.NamespaceId;
 import io.cdap.cdap.proto.id.NamespacedEntityId;
+import io.cdap.cdap.security.auth.AuthenticationMode;
 import io.cdap.cdap.security.spi.authorization.UnauthorizedException;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.authentication.util.KerberosName;
@@ -122,12 +123,27 @@ public final class SecurityUtil {
   }
 
   /**
+   * Check if {@link Constants.Security#KERBEROS_ENABLED} is set. The value is default to the value of
+   * {@link Constants.Security#ENABLED}.
+   *
    * @param cConf CConfiguration object.
    * @return true, if Kerberos is enabled.
    */
   public static boolean isKerberosEnabled(CConfiguration cConf) {
-    return cConf.getBoolean(Constants.Security.KERBEROS_ENABLED,
-                            cConf.getBoolean(Constants.Security.ENABLED));
+    return cConf.getBoolean(Constants.Security.KERBEROS_ENABLED, cConf.getBoolean(Constants.Security.ENABLED));
+  }
+
+  /**
+   * Checks if perimeter security is enabled in managed mode.
+   *
+   * @return {@code true} if security enabled in managed mode
+   * @see Constants.Security#ENABLED
+   * @see Constants.Security.Authentication#MODE
+   */
+  public static boolean isManagedSecurity(CConfiguration cConf) {
+    return cConf.getBoolean(Constants.Security.ENABLED)
+      && cConf.getEnum(Constants.Security.Authentication.MODE,
+                       AuthenticationMode.MANAGED).equals(AuthenticationMode.MANAGED);
   }
 
   public static String getMasterPrincipal(CConfiguration cConf) {
@@ -139,13 +155,16 @@ public final class SecurityUtil {
     return principal;
   }
 
-  public static File getMasterKeytabFile(CConfiguration cConf) {
+  public static String getMasterKeytabURI(CConfiguration cConf) {
     String uri = cConf.get(Constants.Security.CFG_CDAP_MASTER_KRB_KEYTAB_PATH);
     if (uri == null) {
       throw new IllegalArgumentException(Constants.Security.CFG_CDAP_MASTER_KRB_KEYTAB_PATH + " is not configured");
     }
+    return uri;
+  }
 
-    File keytabFile = new File(uri);
+  public static File getMasterKeytabFile(CConfiguration cConf) {
+    File keytabFile = new File(getMasterKeytabURI(cConf));
     if (!Files.isReadable(keytabFile.toPath())) {
       throw new IllegalArgumentException("Keytab file is not a readable file " + keytabFile);
     }
@@ -153,23 +172,25 @@ public final class SecurityUtil {
   }
 
   public static void loginForMasterService(CConfiguration cConf) throws IOException {
-    if (UserGroupInformation.isSecurityEnabled()) {
-      String expandedPrincipal = expandPrincipal(getMasterPrincipal(cConf));
-      File keytabFile = getMasterKeytabFile(cConf);
-
-      LOG.info("Logging in as: principal={}, keytab={}", expandedPrincipal, keytabFile);
-      UserGroupInformation.loginUserFromKeytab(expandedPrincipal, keytabFile.getAbsolutePath());
-
-      long delaySec = cConf.getLong(Constants.Security.KERBEROS_KEYTAB_RELOGIN_INTERVAL);
-      Executors.newSingleThreadScheduledExecutor(Threads.createDaemonThreadFactory("Kerberos keytab renewal"))
-        .scheduleWithFixedDelay(() -> {
-          try {
-            UserGroupInformation.getLoginUser().checkTGTAndReloginFromKeytab();
-          } catch (IOException e) {
-            LOG.error("Failed to relogin from keytab", e);
-          }
-        }, delaySec, delaySec, TimeUnit.SECONDS);
+    if (!isKerberosEnabled(cConf) || !UserGroupInformation.isSecurityEnabled()) {
+      return;
     }
+
+    String expandedPrincipal = expandPrincipal(getMasterPrincipal(cConf));
+    File keytabFile = getMasterKeytabFile(cConf);
+
+    LOG.info("Logging in as: principal={}, keytab={}", expandedPrincipal, keytabFile);
+    UserGroupInformation.loginUserFromKeytab(expandedPrincipal, keytabFile.getAbsolutePath());
+
+    long delaySec = cConf.getLong(Constants.Security.KERBEROS_KEYTAB_RELOGIN_INTERVAL);
+    Executors.newSingleThreadScheduledExecutor(Threads.createDaemonThreadFactory("Kerberos keytab renewal"))
+      .scheduleWithFixedDelay(() -> {
+        try {
+          UserGroupInformation.getLoginUser().checkTGTAndReloginFromKeytab();
+        } catch (IOException e) {
+          LOG.error("Failed to relogin from keytab", e);
+        }
+      }, delaySec, delaySec, TimeUnit.SECONDS);
   }
 
   /**
@@ -229,7 +250,8 @@ public final class SecurityUtil {
                                                           NamespacedEntityId entityId) throws IOException {
     ImpersonationInfo impersonationInfo = ownerAdmin.getImpersonationInfo(entityId);
     if (impersonationInfo == null) {
-      return new ImpersonationInfo(getMasterPrincipal(cConf), getMasterKeytabFile(cConf).toURI().toString());
+      // here we don't need to get the keytab file since we use delegation tokens accross system containers
+      return new ImpersonationInfo(getMasterPrincipal(cConf), getMasterKeytabURI(cConf));
     }
     return impersonationInfo;
   }

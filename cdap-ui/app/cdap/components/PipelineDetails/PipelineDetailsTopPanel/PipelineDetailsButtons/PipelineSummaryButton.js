@@ -23,18 +23,9 @@ import { getCurrentNamespace } from 'services/NamespaceStore';
 import PipelineDetailStore from 'components/PipelineDetails/store';
 import { GLOBALS } from 'services/global-constants';
 import T from 'i18n-react';
-import Popover from '@material-ui/core/Popover';
-import { withStyles } from '@material-ui/core/styles';
+import If from 'components/If';
 
 const PREFIX = 'features.PipelineDetails.TopPanel';
-
-const popoverStyles = {
-  paper: {
-    maxWidth: '100%',
-  },
-};
-
-const FullWidthPopover = withStyles(popoverStyles)(Popover);
 
 export default class PipelineSummaryButton extends Component {
   static propTypes = {
@@ -46,20 +37,26 @@ export default class PipelineSummaryButton extends Component {
     showSummary: false,
   };
 
-  toggleSummary = (anchorEl) => {
+  constructor(props) {
+    super(props);
+
+    this.buttonRef = React.createRef();
+  }
+
+  toggleSummary = (open) => {
     this.setState({
-      showSummary: !this.state.showSummary,
-      anchorEl,
+      showSummary: open,
     });
   };
 
   renderSummaryButton() {
     return (
       <div
-        onClick={(e) => this.toggleSummary(e.currentTarget)}
+        onClick={() => this.toggleSummary(true)}
         className={classnames('btn pipeline-action-btn pipeline-summary-btn', {
           'btn-select': this.state.showSummary,
         })}
+        ref={this.buttonRef}
       >
         <div className="btn-container">
           <IconSVG name="icon-line-chart" className="summary-icon" />
@@ -81,20 +78,7 @@ export default class PipelineSummaryButton extends Component {
         })}
       >
         {this.renderSummaryButton()}
-        <FullWidthPopover
-          anchorEl={this.state.anchorEl}
-          open={this.state.showSummary}
-          onClose={this.toggleSummary}
-          anchorOrigin={{
-            vertical: 'bottom',
-            horizontal: 'center',
-          }}
-          transformOrigin={{
-            vertical: 'top',
-            horizontal: 'right', // needed to use full width of page
-          }}
-          marginThreshold={0}
-        >
+        <If condition={this.state.showSummary}>
           <PipelineSummary
             pipelineType={pipelineType}
             namespaceId={getCurrentNamespace()}
@@ -103,9 +87,11 @@ export default class PipelineSummaryButton extends Component {
             programId={programId}
             pipelineConfig={PipelineDetailStore.getState()}
             totalRunsCount={PipelineDetailStore.getState().runs.length}
-            onClose={this.toggleSummary}
+            onClose={this.toggleSummary.bind(this, false)}
+            anchorEl={this.buttonRef.current}
+            open={this.state.showSummary}
           />
-        </FullWidthPopover>
+        </If>
       </div>
     );
   }

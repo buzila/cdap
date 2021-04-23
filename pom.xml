@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Copyright © 2014-2019 Cask Data, Inc.
+  Copyright © 2014-2021 Cask Data, Inc.
 
   Licensed under the Apache License, Version 2.0 (the "License"); you may not
   use this file except in compliance with the License. You may obtain a copy of
@@ -22,7 +22,7 @@
 
   <groupId>io.cdap.cdap</groupId>
   <artifactId>cdap</artifactId>
-  <version>6.4.0-SNAPSHOT</version>
+  <version>6.5.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>Cask Data Application Platform (CDAP)</name>
   <description>Data Application Platform for Hadoop</description>
@@ -126,10 +126,12 @@
     <async.http.version>1.7.18</async.http.version>
     <avro.version>1.8.2</avro.version>
     <bouncycastle.version>1.60</bouncycastle.version>
-    <cdap.common.version>0.12.0</cdap.common.version>
+    <cdap.common.version>0.13.0</cdap.common.version>
     <cdap.client.version>1.4.0</cdap.client.version>
     <commons.cli.version>1.2</commons.cli.version>
     <commons.compress.version>1.18</commons.compress.version>
+    <commons.lang3.version>3.5</commons.lang3.version>
+    <dropwizard.version>3.1.2</dropwizard.version>
     <fastutil.version>6.5.6</fastutil.version>
     <findbugs.jsr305.version>2.0.1</findbugs.jsr305.version>
     <geronimo.version>2.0.0</geronimo.version>
@@ -147,31 +149,34 @@
     <hbase135.version>1.3.5</hbase135.version>
     <hive.version>2.3.6</hive.version>
     <hsql.version>2.2.4</hsql.version>
+    <jackson.version>2.8.8</jackson.version>
     <jsch.version>0.1.54</jsch.version>
     <jetty.version>6.1.22</jetty.version>
     <jetty8.version>8.1.15.v20140411</jetty8.version>
     <jline.version>2.12</jline.version>
     <junit.version>4.11</junit.version>
     <kafka.version>0.8.2.2</kafka.version>
-    <leveldb.version>0.6</leveldb.version>
+    <leveldb.version>0.12</leveldb.version>
     <logback.version>1.0.9</logback.version>
     <mockftp.version>2.6</mockftp.version>
     <mockito.version>1.9.5</mockito.version>
     <mysql.version>5.1.21</mysql.version>
     <netty.http.version>1.5.0</netty.http.version>
     <netty.version>4.1.16.Final</netty.version>
+    <powermock.version>1.5.6</powermock.version>
     <quartz.version>2.2.0</quartz.version>
     <resteasy.version>3.0.8.Final</resteasy.version>
     <rs-api.version>2.0</rs-api.version>
-    <scala2.10.version>2.10.4</scala2.10.version>
     <scala2.11.version>2.11.8</scala2.11.version>
+    <!-- Please keep consistent with the one in Spark 3 -->
+    <scala2.12.version>2.12.10</scala2.12.version>
     <servlet.api.version>3.0.1</servlet.api.version>
     <slf4j.version>1.7.5</slf4j.version>
     <snappy.version>1.1.1.7</snappy.version>
-    <spark1.artifacts.dir>spark1_2.10</spark1.artifacts.dir>
     <spark2.artifacts.dir>spark2_2.11</spark2.artifacts.dir>
-    <spark1.version>1.6.1</spark1.version>
+    <spark3.artifacts.dir>spark3_2.12</spark3.artifacts.dir>
     <spark2.version>2.4.6</spark2.version>
+    <spark3.version>3.1.1</spark3.version>
     <sshd.version>1.7.0</sshd.version>
     <tephra.version>0.15.0-incubating</tephra.version>
     <tephra_new.version>0.16.0-DataProc</tephra_new.version>
@@ -482,12 +487,18 @@
             <groupId>org.scala-lang</groupId>
             <artifactId>scala-compiler</artifactId>
           </exclusion>
+          <exclusion>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-library</artifactId>
+          </exclusion>
         </exclusions>
       </dependency>
       <dependency>
         <groupId>org.iq80.leveldb</groupId>
         <artifactId>leveldb</artifactId>
         <version>${leveldb.version}</version>
+        <!-- leveldb 0.12 has conflicting guava 20 as a dependency. The uber jar shades guava -->
+        <classifier>uber</classifier>
       </dependency>
       <dependency>
         <groupId>commons-cli</groupId>
@@ -505,8 +516,8 @@
         <version>${twill.version}</version>
         <exclusions>
           <exclusion>
-            <groupId>org.scala-lang</groupId>
-            <artifactId>scala-compiler</artifactId>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka_2.10</artifactId>
           </exclusion>
           <exclusion>
             <groupId>net.jpountz.lz4</groupId>
@@ -1246,11 +1257,49 @@
         <scope>test</scope>
       </dependency>
       <dependency>
+        <groupId>org.powermock</groupId>
+        <artifactId>powermock-module-junit4</artifactId>
+        <version>${powermock.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.powermock</groupId>
+        <artifactId>powermock-api-mockito</artifactId>
+        <version>${powermock.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
         <groupId>org.apache.tephra</groupId>
         <artifactId>tephra-core</artifactId>
         <version>${tephra_new.version}</version>
         <type>test-jar</type>
         <scope>test</scope>
+      </dependency>
+      <!-- Manage dropwizard to version compatible with tephra -->
+      <dependency>
+        <groupId>io.dropwizard.metrics</groupId>
+        <artifactId>metrics-core</artifactId>
+        <version>${dropwizard.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.dropwizard.metrics</groupId>
+        <artifactId>metrics-jvm</artifactId>
+        <version>${dropwizard.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.dropwizard.metrics</groupId>
+        <artifactId>metrics-json</artifactId>
+        <version>${dropwizard.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.dropwizard.metrics</groupId>
+        <artifactId>metrics-graphite</artifactId>
+        <version>${dropwizard.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.dropwizard.metrics</groupId>
+        <artifactId>metrics-jms</artifactId>
+        <version>${dropwizard.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.hadoop</groupId>
@@ -1328,8 +1377,8 @@
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
-        <artifactId>spark-core_2.10</artifactId>
-        <version>${spark1.version}</version>
+        <artifactId>spark-core_2.12</artifactId>
+        <version>${spark3.version}</version>
         <exclusions>
           <exclusion>
             <groupId>org.slf4j</groupId>
@@ -1432,8 +1481,8 @@
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
-        <artifactId>spark-sql_2.10</artifactId>
-        <version>${spark1.version}</version>
+        <artifactId>spark-sql_2.12</artifactId>
+        <version>${spark3.version}</version>
         <exclusions>
           <exclusion>
             <groupId>org.scala-lang</groupId>
@@ -1454,18 +1503,13 @@
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
-        <artifactId>spark-streaming_2.10</artifactId>
-        <version>${spark1.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.spark</groupId>
         <artifactId>spark-streaming_2.11</artifactId>
         <version>${spark2.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
-        <artifactId>spark-mllib_2.10</artifactId>
-        <version>${spark1.version}</version>
+        <artifactId>spark-streaming_2.12</artifactId>
+        <version>${spark3.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
@@ -1474,13 +1518,18 @@
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
-        <artifactId>spark-repl_2.10</artifactId>
-        <version>${spark1.version}</version>
+        <artifactId>spark-mllib_2.12</artifactId>
+        <version>${spark3.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.spark</groupId>
         <artifactId>spark-repl_2.11</artifactId>
         <version>${spark2.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.spark</groupId>
+        <artifactId>spark-repl_2.12</artifactId>
+        <version>${spark3.version}</version>
       </dependency>
       <dependency>
         <groupId>io.cdap.cdap</groupId>
@@ -1528,6 +1577,11 @@
         <version>${commons.compress.version}</version>
       </dependency>
       <dependency>
+        <groupId>org.apache.commons</groupId>
+        <artifactId>commons-lang3</artifactId>
+        <version>${commons.lang3.version}</version>
+      </dependency>
+      <dependency>
         <groupId>org.apache.tez</groupId>
         <artifactId>tez-api</artifactId>
         <version>${tez.version}</version>
@@ -1561,6 +1615,41 @@
             <artifactId>commons-logging</artifactId>
           </exclusion>
         </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-core</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-annotations</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.dataformat</groupId>
+        <artifactId>jackson-dataformat-cbor</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.module</groupId>
+        <artifactId>jackson-module-scala_2.10</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.module</groupId>
+        <artifactId>jackson-module-scala_2.11</artifactId>
+        <version>${jackson.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.module</groupId>
+        <artifactId>jackson-module-scala_2.12</artifactId>
+        <version>${jackson.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -1667,6 +1756,8 @@
                   <exclude>**/MANIFEST.MF</exclude>
                   <exclude>**/.rubocop*.yml</exclude>
                   <exclude>third-party-licenses/**</exclude>
+                  <exclude>.gitpod.yml</exclude>
+                  <exclude>.gitpod.Dockerfile</exclude>
                 </excludes>
               </configuration>
             </execution>
@@ -2613,8 +2704,8 @@
         <module>cdap-common-unit-test</module>
         <module>cdap-api-common</module>
         <module>cdap-api</module>
-        <module>cdap-api-spark</module>
         <module>cdap-api-spark2_2.11</module>
+        <module>cdap-api-spark3_2.12</module>
         <module>cdap-formats</module>
         <module>cdap-elastic</module>
         <module>cdap-hbase-compat-base</module>
@@ -2633,8 +2724,8 @@
         <module>cdap-data-fabric</module>
         <module>cdap-watchdog</module>
         <module>cdap-app-fabric</module>
-        <module>cdap-spark-core</module>
         <module>cdap-spark-core2_2.11</module>
+        <module>cdap-spark-core3_2.12</module>
         <module>cdap-spark-python</module>
         <module>cdap-security-spi</module>
         <module>cdap-security</module>
@@ -2649,6 +2740,7 @@
         <module>cdap-explore</module>
         <module>cdap-unit-test</module>
         <module>cdap-unit-test-spark2_2.11</module>
+        <module>cdap-unit-test-spark3_2.12</module>
         <module>cdap-kms</module>
         <module>cdap-master-spi</module>
         <module>cdap-master</module>

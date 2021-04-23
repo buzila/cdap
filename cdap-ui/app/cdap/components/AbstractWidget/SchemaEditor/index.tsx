@@ -61,6 +61,7 @@ interface ISchemaEditorProps extends WithStyles<typeof styles> {
     avroSchema: ISchemaType;
   }) => IOnChangeReturnType;
   errors?: Record<string, string>;
+  resetErrors?: boolean;
 }
 
 interface ISchemaEditorState {
@@ -68,6 +69,7 @@ interface ISchemaEditorState {
   flat: IFlattenRowType[];
   schemaRowCount: number;
   errors: Record<string, string>;
+  resetErrors: boolean;
 }
 
 class SchemaEditorBase extends React.Component<ISchemaEditorProps, ISchemaEditorState> {
@@ -82,6 +84,7 @@ class SchemaEditorBase extends React.Component<ISchemaEditorProps, ISchemaEditor
       tree: dumbestClone(this.schema.getSchemaTree()),
       schemaRowCount: this.props.visibleRows,
       errors: null,
+      resetErrors: false,
     };
   }
   public componentDidMount() {
@@ -91,7 +94,7 @@ class SchemaEditorBase extends React.Component<ISchemaEditorProps, ISchemaEditor
   }
 
   public componentWillReceiveProps(nextProps) {
-    const { visibleRows, errors } = nextProps;
+    const { visibleRows, errors, resetErrors } = nextProps;
     const newState: Partial<ISchemaEditorState> = {};
     if (visibleRows !== this.state.schemaRowCount) {
       newState.schemaRowCount = visibleRows;
@@ -110,6 +113,7 @@ class SchemaEditorBase extends React.Component<ISchemaEditorProps, ISchemaEditor
       }
       newState.errors = mapOfRowIdToError;
     }
+    newState.resetErrors = !!resetErrors;
     if (Object.keys(newState).length) {
       this.setState(newState as ISchemaEditorState);
     }
@@ -138,7 +142,7 @@ class SchemaEditorBase extends React.Component<ISchemaEditorProps, ISchemaEditor
     const { classes } = this.props;
     return (
       <div>
-        <SchemaValidatorProvider errors={this.state.errors}>
+        <SchemaValidatorProvider errors={this.state.errors} reset={this.state.resetErrors}>
           <div className={classes.schemaContainer}>
             <SchemaValidatorConsumer>
               {({ validate }) => {
@@ -175,6 +179,7 @@ SchemaEditor.propTypes = {
   disabled: PropTypes.bool,
   visibleRows: PropTypes.number,
   errors: PropTypes.object,
+  resetErrors: PropTypes.bool,
 };
 
 const heightOfRow = FieldsListBase.heightOfRow;

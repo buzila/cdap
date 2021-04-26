@@ -640,6 +640,13 @@ final class SparkRuntimeService extends AbstractExecutionThreadService {
           File libDir = new File(ClassLoaders.getClassPathURL(className, classURL).toURI()).getParentFile();
 
           for (File file : DirUtils.listFiles(libDir, "jar")) {
+            // TODO: replace this ugly hotfix
+            // this is done to avoid conflict in logging libraries
+            // a better way to exclude all libreries from Spark classpath
+            if(file.getName().contains("slf4j") ||
+                    file.getName().contains("log4j") ||
+                    file.getName().contains("logback"))
+              continue;
             if (classpath.add(file.getName())) {
               jarOut.putNextEntry(new JarEntry(file.getName()));
               Files.copy(file, jarOut);

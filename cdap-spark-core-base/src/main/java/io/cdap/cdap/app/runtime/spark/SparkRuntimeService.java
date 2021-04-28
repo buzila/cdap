@@ -643,7 +643,7 @@ final class SparkRuntimeService extends AbstractExecutionThreadService {
             // TODO: replace this ugly hotfix
             // this is done to avoid conflict in logging libraries
             // a better way to exclude all libreries from Spark classpath
-            if(file.getName().contains("slf4j") || file.getName().contains("log4j") || file.getName().contains("logback")) {
+            if(file.getName().contains("slf4j") || file.getName().contains("log4j")) {
                 continue;
             }
             if (classpath.add(file.getName())) {

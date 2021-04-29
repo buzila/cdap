@@ -88,6 +88,12 @@
     <dependency>
       <groupId>io.cdap.common</groupId>
       <artifactId>common-http</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>org.slf4j</groupId>
+          <artifactId>slf4j-api</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>com.google.guava</groupId>

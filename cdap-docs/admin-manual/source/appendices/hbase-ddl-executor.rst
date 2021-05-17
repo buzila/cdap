@@ -344,21 +344,7 @@ Corresponding ``pom.xml``. Configure the property ``hbase-client`` (currently ``
       <cdap.version>|release|</cdap.version>
       <slf4j.version>1.7.5</slf4j.version>
     </properties>
- 
-    <repositories>
-      <repository>
-        <id>sonatype</id>
-        <url>https://oss.sonatype.org/content/groups/public</url>
-      </repository>
-      <repository>
-        <id>apache.snapshots</id>
-        <url>https://repository.apache.org/content/repositories/snapshots</url>
-      </repository>
-      <repository>
-        <id>cloudera</id>
-        <url>https://repository.cloudera.com/artifactory/cloudera-repos/</url>
-      </repository>
-    </repositories>
+
  
     <dependencies>
       <dependency>
